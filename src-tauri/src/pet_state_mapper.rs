@@ -13,7 +13,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -24,6 +24,38 @@ use crate::acp::types::{AcpEvent, ConnectionStatus, EventEnvelope};
 use crate::db::entities::conversation::ConversationStatus;
 use crate::models::pet::PetState;
 use crate::web::event_bridge::{emit_event, EventEmitter, WebEvent, WebEventBroadcaster};
+
+/// Shared latest-known `PetState`, written by the subscriber task and read
+/// by the `pet_get_current_state` command. Lets a freshly opened pet window
+/// pick up the *current* ambient state instead of waiting for the next
+/// state transition — the subscriber only emits on changes, so without this
+/// the frontend would otherwise sit on its default `Idle` indefinitely if
+/// the agent was already running when the window opened.
+pub type PetStateHandle = Arc<RwLock<PetState>>;
+
+pub fn new_pet_state_handle() -> PetStateHandle {
+    Arc::new(RwLock::new(PetState::Idle))
+}
+
+/// Read the current ambient state. Falls back to `Idle` if the lock is
+/// poisoned — a poisoned lock means the writer panicked, in which case
+/// the snapshot is stale and `Idle` is the safe default.
+pub fn read_pet_state(handle: &PetStateHandle) -> PetState {
+    handle.read().map(|guard| *guard).unwrap_or(PetState::Idle)
+}
+
+fn write_pet_state(handle: &PetStateHandle, value: PetState) {
+    match handle.write() {
+        Ok(mut guard) => *guard = value,
+        Err(err) => {
+            // A poisoned lock means a previous writer panicked. The handle
+            // is now permanently stale, which would silently degrade the
+            // open-pet-mid-conversation experience to "always Idle" with no
+            // other symptom. Surface it so it shows up in operator logs.
+            eprintln!("[Pet] pet_state handle poisoned, dropping write: {err}");
+        }
+    }
+}
 
 /// How long the ambient `Failed` state stays visible before automatically
 /// fading back to whatever the rest of the snapshot would compute. Restarts
@@ -232,6 +264,7 @@ fn cancel_failed_recovery(clear_task: &mut Option<JoinHandle<()>>) {
 pub fn pet_state_subscriber_task(
     broadcaster: Arc<WebEventBroadcaster>,
     emitter: EventEmitter,
+    handle: PetStateHandle,
 ) -> impl Future<Output = ()> + Send + 'static {
     let mut rx = broadcaster.subscribe();
     let (clear_tx, mut clear_rx) = mpsc::channel::<()>(8);
@@ -240,6 +273,7 @@ pub fn pet_state_subscriber_task(
         let mut last_state = PetState::Idle;
         let mut clear_task: Option<JoinHandle<()>> = None;
         // Push an initial "idle" snapshot so the renderer doesn't start blank.
+        write_pet_state(&handle, last_state);
         emit_event(&emitter, "pet://state", last_state);
 
         loop {
@@ -322,6 +356,7 @@ pub fn pet_state_subscriber_task(
                                 let next = compute_pet_state(&snapshot);
                                 if next != last_state {
                                     last_state = next;
+                                    write_pet_state(&handle, next);
                                     emit_event(&emitter, "pet://state", next);
                                 }
                             }
@@ -342,6 +377,7 @@ pub fn pet_state_subscriber_task(
                             cancel_failed_recovery(&mut clear_task);
                             if last_state != PetState::Idle {
                                 last_state = PetState::Idle;
+                                write_pet_state(&handle, last_state);
                                 emit_event(&emitter, "pet://state", last_state);
                             }
                         }
@@ -360,6 +396,7 @@ pub fn pet_state_subscriber_task(
                     let next = compute_pet_state(&snapshot);
                     if next != last_state {
                         last_state = next;
+                        write_pet_state(&handle, next);
                         emit_event(&emitter, "pet://state", next);
                     }
                 }
@@ -885,7 +922,11 @@ mod tests {
 
         // Subscribe BEFORE spawning so we don't miss the initial idle emit.
         let mut rx = broadcaster.subscribe();
-        tokio::spawn(pet_state_subscriber_task(broadcaster.clone(), emitter));
+        tokio::spawn(pet_state_subscriber_task(
+            broadcaster.clone(),
+            emitter,
+            new_pet_state_handle(),
+        ));
 
         // Drain the initial `pet://state = idle` emit.
         let _ = rx.recv().await;
@@ -917,7 +958,11 @@ mod tests {
         let broadcaster = Arc::new(WebEventBroadcaster::new());
         let emitter = EventEmitter::WebOnly(broadcaster.clone());
         let mut rx = broadcaster.subscribe();
-        tokio::spawn(pet_state_subscriber_task(broadcaster.clone(), emitter));
+        tokio::spawn(pet_state_subscriber_task(
+            broadcaster.clone(),
+            emitter,
+            new_pet_state_handle(),
+        ));
         let _ = rx.recv().await; // initial idle
 
         broadcaster.send(
@@ -935,7 +980,11 @@ mod tests {
         let broadcaster = Arc::new(WebEventBroadcaster::new());
         let emitter = EventEmitter::WebOnly(broadcaster.clone());
         let mut rx = broadcaster.subscribe();
-        tokio::spawn(pet_state_subscriber_task(broadcaster.clone(), emitter));
+        tokio::spawn(pet_state_subscriber_task(
+            broadcaster.clone(),
+            emitter,
+            new_pet_state_handle(),
+        ));
         let _ = rx.recv().await;
 
         broadcaster.send(
@@ -956,7 +1005,11 @@ mod tests {
         let broadcaster = Arc::new(WebEventBroadcaster::new());
         let emitter = EventEmitter::WebOnly(broadcaster.clone());
         let mut rx = broadcaster.subscribe();
-        tokio::spawn(pet_state_subscriber_task(broadcaster.clone(), emitter));
+        tokio::spawn(pet_state_subscriber_task(
+            broadcaster.clone(),
+            emitter,
+            new_pet_state_handle(),
+        ));
         let _ = rx.recv().await;
 
         broadcaster.send(
@@ -981,7 +1034,11 @@ mod tests {
         let broadcaster = Arc::new(WebEventBroadcaster::new());
         let emitter = EventEmitter::WebOnly(broadcaster.clone());
         let mut rx = broadcaster.subscribe();
-        tokio::spawn(pet_state_subscriber_task(broadcaster.clone(), emitter));
+        tokio::spawn(pet_state_subscriber_task(
+            broadcaster.clone(),
+            emitter,
+            new_pet_state_handle(),
+        ));
         // initial idle
         let initial = rx.recv().await.unwrap();
         assert_eq!(initial.channel, "pet://state");
@@ -1042,7 +1099,11 @@ mod tests {
         let broadcaster = Arc::new(WebEventBroadcaster::new());
         let emitter = EventEmitter::WebOnly(broadcaster.clone());
         let mut rx = broadcaster.subscribe();
-        tokio::spawn(pet_state_subscriber_task(broadcaster.clone(), emitter));
+        tokio::spawn(pet_state_subscriber_task(
+            broadcaster.clone(),
+            emitter,
+            new_pet_state_handle(),
+        ));
         let _ = rx.recv().await; // initial idle
 
         let send_error = |conn: &str| {
@@ -1121,6 +1182,101 @@ mod tests {
             .expect("oneshot should fire within 1s")
             .expect("recv");
         assert_eq!(evt.payload.as_ref(), &serde_json::json!("failed"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn handle_resets_to_idle_on_failed_recovery_timeout() {
+        // The `clear_rx` arm of the subscriber's select! also writes the
+        // handle. Without it, after a brief Failed flash recovers to Idle,
+        // a freshly-opened pet window would see a stale `failed` snapshot
+        // for the rest of the session.
+        let broadcaster = Arc::new(WebEventBroadcaster::new());
+        let emitter = EventEmitter::WebOnly(broadcaster.clone());
+        let handle = new_pet_state_handle();
+        let mut rx = broadcaster.subscribe();
+        tokio::spawn(pet_state_subscriber_task(
+            broadcaster.clone(),
+            emitter,
+            handle.clone(),
+        ));
+        let _ = rx.recv().await; // initial idle
+
+        broadcaster.send(
+            "acp://event",
+            &EventEnvelope {
+                seq: 1,
+                connection_id: "c1".into(),
+                payload: AcpEvent::Error {
+                    message: "boom".into(),
+                    agent_type: "claude_code".into(),
+                    code: None,
+                },
+            },
+        );
+        let failed = read_state_event(&mut rx).await;
+        assert_eq!(failed.payload.as_ref(), &serde_json::json!("failed"));
+        assert_eq!(read_pet_state(&handle), PetState::Failed);
+
+        tokio::time::advance(Duration::from_millis(PET_FAILED_RECOVERY_MS + 100)).await;
+        let recovered = read_state_event(&mut rx).await;
+        assert_eq!(recovered.payload.as_ref(), &serde_json::json!("idle"));
+        assert_eq!(
+            read_pet_state(&handle),
+            PetState::Idle,
+            "handle must follow the auto-recovery transition, not stay stuck on failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_tracks_last_emitted_ambient_state() {
+        // Regression for the open-pet-mid-conversation case: the subscriber
+        // de-duplicates emissions on `pet://state`, so a window opening
+        // *after* the state has already settled into Running won't see any
+        // event. The handle is the snapshot the freshly-mounted frontend
+        // reads to fill in the gap, so it must always reflect the most
+        // recent emitted ambient state.
+        let broadcaster = Arc::new(WebEventBroadcaster::new());
+        let emitter = EventEmitter::WebOnly(broadcaster.clone());
+        let handle = new_pet_state_handle();
+        let mut rx = broadcaster.subscribe();
+        tokio::spawn(pet_state_subscriber_task(
+            broadcaster.clone(),
+            emitter,
+            handle.clone(),
+        ));
+
+        // Drain initial idle emit; handle is set in lockstep.
+        let initial = read_state_event(&mut rx).await;
+        assert_eq!(initial.payload.as_ref(), &serde_json::json!("idle"));
+        assert_eq!(read_pet_state(&handle), PetState::Idle);
+
+        broadcaster.send(
+            "acp://event",
+            &EventEnvelope {
+                seq: 1,
+                connection_id: "c1".into(),
+                payload: AcpEvent::StatusChanged {
+                    status: ConnectionStatus::Prompting,
+                },
+            },
+        );
+        let running = read_state_event(&mut rx).await;
+        assert_eq!(running.payload.as_ref(), &serde_json::json!("running"));
+        assert_eq!(read_pet_state(&handle), PetState::Running);
+
+        broadcaster.send(
+            "acp://event",
+            &EventEnvelope {
+                seq: 2,
+                connection_id: "c1".into(),
+                payload: AcpEvent::StatusChanged {
+                    status: ConnectionStatus::Connected,
+                },
+            },
+        );
+        let waiting = read_state_event(&mut rx).await;
+        assert_eq!(waiting.payload.as_ref(), &serde_json::json!("waiting"));
+        assert_eq!(read_pet_state(&handle), PetState::Waiting);
     }
 
     #[test]
