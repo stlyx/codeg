@@ -125,6 +125,7 @@ mod tauri_app {
             .manage(std::sync::Arc::new(
                 web::event_bridge::WebEventBroadcaster::new(),
             ))
+            .manage(crate::pet_state_mapper::new_pet_state_handle())
             .setup(|app| {
                 let app_data_dir = app.path().app_data_dir()?;
                 let app_version = env!("CARGO_PKG_VERSION");
@@ -211,9 +212,14 @@ mod tauri_app {
                         .inner()
                         .clone();
                     let emitter = web::event_bridge::EventEmitter::Tauri(app.handle().clone());
+                    let pet_state_handle = app
+                        .state::<crate::pet_state_mapper::PetStateHandle>()
+                        .inner()
+                        .clone();
                     tauri::async_runtime::spawn(crate::pet_state_mapper::pet_state_subscriber_task(
                         broadcaster,
                         emitter,
+                        pet_state_handle,
                     ));
                 }
 
@@ -555,6 +561,7 @@ mod tauri_app {
                 pet_commands::pet_marketplace_list,
                 pet_commands::pet_marketplace_install,
                 pet_commands::pet_celebrate,
+                pet_commands::pet_get_current_state,
                 project_boot::detect_package_manager,
                 project_boot::create_shadcn_project,
                 system_settings::get_system_proxy_settings,

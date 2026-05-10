@@ -546,6 +546,12 @@ pub async fn start_web_server(
         data_dir: app.path().app_data_dir().unwrap_or_default(),
         web_server_state: WebServerState::new(), // placeholder; not used by handlers
         chat_channel_manager: crate::app_state::default_chat_channel_manager(),
+        // Reuse the same handle the Tauri-mode subscriber writes to so HTTP
+        // and webview readers see the identical snapshot.
+        pet_state: app
+            .state::<crate::pet_state_mapper::PetStateHandle>()
+            .inner()
+            .clone(),
     });
 
     // See do_start_web_server_with_state for rationale on the reset.

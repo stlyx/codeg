@@ -15,8 +15,10 @@ use crate::db::service::app_metadata_service;
 use crate::db::AppDatabase;
 use crate::models::pet::{
     ImportCodexPetsRequest, ImportCodexPetsResult, ImportablePet, NewPetInput, PetCelebrationKind,
-    PetDetail, PetMetaPatch, PetSpriteAsset, PetSummary, PetWindowConfig, PetWindowStatePatch,
+    PetDetail, PetMetaPatch, PetSpriteAsset, PetState, PetSummary, PetWindowConfig,
+    PetWindowStatePatch,
 };
+use crate::pet_state_mapper::{read_pet_state, PetStateHandle};
 use crate::pets;
 use crate::pets::marketplace::{
     MarketplaceInstallRequest, MarketplaceInstallResponse, MarketplaceListParams,
@@ -168,6 +170,15 @@ pub async fn pet_set_active_core(
 pub fn pet_celebrate_core(emitter: &EventEmitter, kind: PetCelebrationKind) {
     let state: crate::models::pet::PetState = kind.into();
     emit_event(emitter, "pet://oneshot", state);
+}
+
+/// Snapshot of the current ambient pet state. The mapper only emits
+/// `pet://state` when the state changes, so a window that opens *after*
+/// the agent already started prompting would otherwise sit on its default
+/// `Idle` until the next ACP transition. The frontend calls this on mount
+/// to fill in the gap.
+pub fn pet_get_current_state_core(handle: &PetStateHandle) -> PetState {
+    read_pet_state(handle)
 }
 
 pub async fn pet_save_window_state_core(
@@ -392,6 +403,14 @@ pub async fn pet_celebrate(
 ) -> Result<(), AppCommandError> {
     pet_celebrate_core(&EventEmitter::Tauri(app), kind);
     Ok(())
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn pet_get_current_state(
+    handle: tauri::State<'_, PetStateHandle>,
+) -> Result<PetState, AppCommandError> {
+    Ok(pet_get_current_state_core(handle.inner()))
 }
 
 #[cfg(feature = "tauri-runtime")]

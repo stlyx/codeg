@@ -100,6 +100,7 @@ async fn async_main() {
     let emitter = EventEmitter::WebOnly(broadcaster.clone());
 
     // Build AppState
+    let pet_state_handle = codeg_lib::pet_state_mapper::new_pet_state_handle();
     let state = Arc::new(AppState {
         db,
         connection_manager: codeg_lib::app_state::default_connection_manager(),
@@ -109,6 +110,7 @@ async fn async_main() {
         data_dir,
         web_server_state: WebServerState::new(),
         chat_channel_manager: codeg_lib::app_state::default_chat_channel_manager(),
+        pet_state: pet_state_handle.clone(),
     });
 
     // Install bundled expert skills into the central store
@@ -156,6 +158,7 @@ async fn async_main() {
     tokio::spawn(codeg_lib::pet_state_mapper::pet_state_subscriber_task(
         state.event_broadcaster.clone(),
         state.emitter.clone(),
+        pet_state_handle,
     ));
 
     // Spawn the idle sweep so connections abandoned without an explicit

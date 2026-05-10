@@ -3,6 +3,7 @@
 // in Tauri (`invoke`) and standalone-server (`fetch`) modes.
 
 import { getTransport } from "@/lib/transport"
+import type { PetState } from "@/lib/pet/animation"
 import type {
   ImportablePet,
   ImportCodexPetsRequest,
@@ -108,6 +109,14 @@ export type PetCelebrationKind = "jumping" | "waving" | "failed"
 
 export async function petCelebrate(kind: PetCelebrationKind): Promise<void> {
   return getTransport().call("pet_celebrate", { kind })
+}
+
+// Snapshot of the current ambient pet state. The mapper only emits
+// `pet://state` on transitions, so a window mounted *after* the agent
+// already started prompting would otherwise sit on the default `idle`.
+// `usePetState` calls this on mount to fill in the gap.
+export async function getCurrentPetState(): Promise<PetState> {
+  return getTransport().call("pet_get_current_state")
 }
 
 // Tauri-only — these are noops in web mode (the standalone server cannot
