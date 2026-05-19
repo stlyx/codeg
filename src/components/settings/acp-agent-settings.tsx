@@ -3934,6 +3934,7 @@ export function AcpAgentSettings() {
           envText: patchEnvText(current.envText, {
             OPENAI_API_KEY: apiKey,
             OPENAI_BASE_URL: apiUrl,
+            OPENAI_MODEL: codexModel,
           }),
         }))
       } else if (agentType === "gemini") {

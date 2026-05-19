@@ -1996,7 +1996,8 @@ const CLAUDE_MODEL_KEY_MAP: &[(&str, &str)] = &[
 /// - Claude: returns 5 entries (one per ANTHROPIC_*_MODEL). Each entry is `None`
 ///   when the provider's JSON omits that key or has an empty value.
 /// - Gemini: returns `GEMINI_MODEL`.
-/// - Codex: returns empty — Codex stores `model` in `config.toml` (handled via
+/// - Codex: returns `OPENAI_MODEL` so the provider can override env_json (the
+///   root `model` in `config.toml` is handled separately by
 ///   `provider_codex_model_action`).
 /// - Others: returns `OPENAI_MODEL`.
 pub(crate) fn parse_provider_model(
@@ -2020,9 +2021,6 @@ pub(crate) fn parse_provider_model(
                     .map(str::to_string);
                 out.insert((*env_name).to_string(), value);
             }
-        }
-        AgentType::Codex => {
-            // Codex model is written to config.toml, not env_json.
         }
         AgentType::Gemini => {
             out.insert("GEMINI_MODEL".to_string(), trimmed_raw.map(str::to_string));
