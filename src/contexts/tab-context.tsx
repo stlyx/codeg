@@ -72,7 +72,6 @@ interface TabContextValue {
     tabId: string,
     runtimeConversationId: number
   ) => void
-  setTabFolder: (tabId: string, folderId: number, workingDir: string) => void
   reorderTabs: (reorderedTabs: TabItem[]) => void
   onPreviewTabReplaced: (callback: (tabId: string) => void) => () => void
 }
@@ -537,6 +536,15 @@ export function TabProvider({ children }: TabProviderProps) {
 
   const openNewConversationTab = useCallback(
     (folderId: number, workingDir: string) => {
+      // Resolve the folder's saved default agent if any; otherwise fall
+      // back to AGENT_DISPLAY_ORDER[0]. AgentSelector will further fall
+      // back to the first *available* agent if this one is disabled or
+      // not installed.
+      const folderDefault = folders.find(
+        (f) => f.id === folderId
+      )?.default_agent_type
+      const targetAgent: AgentType = folderDefault ?? AGENT_DISPLAY_ORDER[0]
+
       // Singleton: reuse any existing draft tab regardless of folder,
       // so only one new-conversation tab can exist at a time.
       const existingTab = rawTabsRef.current.find(
@@ -546,16 +554,17 @@ export function TabProvider({ children }: TabProviderProps) {
       if (existingTab) {
         const folderChanged = existingTab.folderId !== folderId
         const workingDirChanged = existingTab.workingDir !== workingDir
+        const agentChanged = existingTab.agentType !== targetAgent
 
         setActiveTabId(existingTab.id)
         activateConversationPane()
 
-        if (folderChanged) {
+        if (folderChanged || agentChanged) {
           // Tear down the old ACP connection (bound to the old
-          // workingDir) before patching the tab's folderId/workingDir.
-          // The connection-lifecycle effect watches workingDir; once
-          // status has settled to disconnected and workingDir flips,
-          // it auto-reconnects against the new folder.
+          // workingDir/agent) before patching tab fields. The
+          // connection-lifecycle effect watches workingDir and
+          // agentType; once status has settled to disconnected and
+          // either flips, it auto-reconnects against the new params.
           void (async () => {
             try {
               await acpDisconnect(existingTab.id)
@@ -564,7 +573,14 @@ export function TabProvider({ children }: TabProviderProps) {
             }
             setTabs((prev) =>
               prev.map((t) =>
-                t.id === existingTab.id ? { ...t, folderId, workingDir } : t
+                t.id === existingTab.id
+                  ? {
+                      ...t,
+                      folderId,
+                      workingDir,
+                      agentType: targetAgent,
+                    }
+                  : t
               )
             )
           })()
@@ -578,21 +594,13 @@ export function TabProvider({ children }: TabProviderProps) {
         return
       }
 
-      // Seed the draft tab with the folder's saved default agent if any;
-      // otherwise fall back to AGENT_DISPLAY_ORDER[0]. AgentSelector will
-      // further fall back to the first *available* agent if this one is
-      // disabled or not installed.
-      const folderDefault = folders.find(
-        (f) => f.id === folderId
-      )?.default_agent_type
-      const agentType: AgentType = folderDefault ?? AGENT_DISPLAY_ORDER[0]
       const tabId = makeNewConversationTabId()
       const newTab: TabItemInternal = {
         id: tabId,
         kind: "conversation",
         folderId,
         conversationId: null,
-        agentType,
+        agentType: targetAgent,
         title: t("newConversation"),
         isPinned: true,
         workingDir,
@@ -663,17 +671,6 @@ export function TabProvider({ children }: TabProviderProps) {
     []
   )
 
-  const setTabFolder = useCallback(
-    (tabId: string, folderId: number, workingDir: string) => {
-      setTabs((prev) =>
-        prev.map((tab) =>
-          tab.id === tabId ? { ...tab, folderId, workingDir } : tab
-        )
-      )
-    },
-    []
-  )
-
   const value = useMemo(
     () => ({
       tabs,
@@ -692,7 +689,6 @@ export function TabProvider({ children }: TabProviderProps) {
       openNewConversationTab,
       bindConversationTab,
       setTabRuntimeConversationId,
-      setTabFolder,
       reorderTabs,
       onPreviewTabReplaced,
     }),
@@ -713,7 +709,6 @@ export function TabProvider({ children }: TabProviderProps) {
       openNewConversationTab,
       bindConversationTab,
       setTabRuntimeConversationId,
-      setTabFolder,
       reorderTabs,
       onPreviewTabReplaced,
     ]

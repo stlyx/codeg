@@ -125,16 +125,6 @@ function buildOptimisticUserTurnFromDraft(
   }
 }
 
-function normalizeErrorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
-}
-
-function isExpectedConnectError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false
-  return (error as { alerted?: unknown }).alerted === true
-}
-
 function buildVirtualConversationId(seed: string): number {
   let hash = 0
   for (let i = 0; i < seed.length; i += 1) {
@@ -255,6 +245,21 @@ const ConversationTabView = memo(function ConversationTabView({
     selectedAgentRef.current = selectedAgent
   }, [selectedAgent])
 
+  // Sync the agentType prop into draftAgentType for draft tabs. The prop
+  // changes when openNewConversationTab re-points an existing draft at a
+  // different folder's default agent (or when any other external mutation
+  // updates tab.agentType). Without this mirror, the local draftAgentType
+  // would stay frozen at its mount value and the UI/connection would not
+  // follow. Persisted conversations read agentType directly from the prop
+  // via selectedAgent, so they are unaffected.
+  useEffect(() => {
+    if (conversationId != null) return
+    if (agentType === selectedAgentRef.current) return
+    setDraftAgentType(agentType)
+    setModeId(getSavedModeId(agentType))
+    setAgentConnectError(null)
+  }, [agentType, conversationId])
+
   const {
     detail,
     loading: detailLoading,
@@ -330,12 +335,7 @@ const ConversationTabView = memo(function ConversationTabView({
         ? externalId
         : undefined,
   })
-  const {
-    status: connStatus,
-    connect: connConnect,
-    disconnect: connDisconnect,
-    sessionId: connSessionId,
-  } = conn
+  const { status: connStatus, sessionId: connSessionId } = conn
   const messageQueue = useMessageQueue()
   const {
     queue: msgQueue,
@@ -709,44 +709,23 @@ const ConversationTabView = memo(function ConversationTabView({
     })
   }, [selectedAgent])
 
-  const handleAgentSelect = useCallback(
-    (nextAgentType: AgentType) => {
-      if (nextAgentType === selectedAgentRef.current) return
-      if (dbConvIdRef.current) return
+  // Manual agent switch only updates local draft state. The single source of
+  // truth for (dis)connecting is `useConnectionLifecycle`'s auto-connect
+  // effect: when `selectedAgent` changes, the hook re-fires `connect()`,
+  // which internally disconnects the old agent's connection at the same
+  // contextKey before creating the new one (acp-connections-context.tsx).
+  // Doing the disconnect+reconnect here too would race the lifecycle path:
+  // a late-returning disconnect would dispatch CONNECTION_REMOVED by
+  // contextKey and wipe the new connection's frontend state, leaving a
+  // backend orphan.
+  const handleAgentSelect = useCallback((nextAgentType: AgentType) => {
+    if (nextAgentType === selectedAgentRef.current) return
+    if (dbConvIdRef.current) return
 
-      setDraftAgentType(nextAgentType)
-      setModeId(getSavedModeId(nextAgentType))
-      setAgentConnectError(null)
-
-      const s = connStatusRef.current
-      const doConnect = () => {
-        if (!workingDirForConnection) return
-        connConnect(nextAgentType, workingDirForConnection, undefined)
-          .then(() => {
-            setAgentConnectError(null)
-          })
-          .catch((e) => {
-            setAgentConnectError(normalizeErrorMessage(e))
-            if (!isExpectedConnectError(e)) {
-              console.error("[ConversationTabView] switch agent:", e)
-            }
-          })
-      }
-
-      // If not yet connected, directly attempt to connect with the new agent.
-      if (!s || s === "disconnected" || s === "error") {
-        doConnect()
-        return
-      }
-
-      connDisconnect()
-        .catch((e) =>
-          console.error("[ConversationTabView] disconnect old agent:", e)
-        )
-        .finally(doConnect)
-    },
-    [connConnect, connDisconnect, workingDirForConnection]
-  )
+    setDraftAgentType(nextAgentType)
+    setModeId(getSavedModeId(nextAgentType))
+    setAgentConnectError(null)
+  }, [])
 
   const handleModeChange = useCallback(
     (newModeId: string) => {

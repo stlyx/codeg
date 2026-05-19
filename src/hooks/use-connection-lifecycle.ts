@@ -111,10 +111,6 @@ export function useConnectionLifecycle({
   useEffect(() => {
     connConnectRef.current = connConnect
   }, [connConnect])
-  const agentTypeRef = useRef(agentType)
-  useEffect(() => {
-    agentTypeRef.current = agentType
-  }, [agentType])
   const sessionIdRef = useRef(sessionId)
   useEffect(() => {
     sessionIdRef.current = sessionId
@@ -132,19 +128,19 @@ export function useConnectionLifecycle({
   }, [isActive, contextKey, setActiveKey, touchActivity])
 
   // Auto-connect when tab becomes active and workingDir is available.
-  // Depends on isActive + workingDir so that connections wait for folder
-  // info to load (workingDir transitions from undefined → folder.path),
-  // and so that changing folders on an already-connected tab triggers a
-  // reconnect with the new cwd. The context's connect() dedups same-param
-  // calls and disconnects+reconnects when workingDir differs.
-  // Status changes must NOT re-trigger this to avoid infinite reconnect
-  // loops on transient errors.
+  // Depends on isActive + workingDir + agentType so that connections wait
+  // for folder info to load (workingDir transitions from undefined →
+  // folder.path), and so that changing folders or agents on an already-
+  // connected tab triggers a reconnect. The context's connect() dedups
+  // same-param calls and disconnects+reconnects when workingDir or
+  // agentType differs. Status changes must NOT re-trigger this to avoid
+  // infinite reconnect loops on transient errors.
   useEffect(() => {
     if (!isActive) return
     if (!workingDir) return
     let cancelled = false
     connConnectRef
-      .current(agentTypeRef.current, workingDir, sessionIdRef.current)
+      .current(agentType, workingDir, sessionIdRef.current)
       .then(() => {
         if (!cancelled) {
           setLastAutoConnectError(null)
@@ -154,7 +150,7 @@ export function useConnectionLifecycle({
         if (!cancelled) {
           setLastAutoConnectError({
             contextKey: contextKeyRef.current,
-            agentType: agentTypeRef.current,
+            agentType,
             message: normalizeErrorMessage(e),
           })
         }
@@ -165,7 +161,7 @@ export function useConnectionLifecycle({
     return () => {
       cancelled = true
     }
-  }, [isActive, workingDir])
+  }, [isActive, workingDir, agentType])
 
   // Manage task status for connection progress
   const taskIdRef = useRef<string | null>(null)
