@@ -99,7 +99,7 @@ export function WelcomeHero() {
   )
 
   return (
-    <div className="flex w-full flex-col items-center gap-7">
+    <div className="flex w-full flex-col items-center gap-4">
       <div className="relative flex h-28 w-28 items-center justify-center">
         <div
           aria-hidden
