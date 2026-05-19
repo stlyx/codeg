@@ -576,7 +576,14 @@ export function TabProvider({ children }: TabProviderProps) {
         return
       }
 
-      const agentType = AGENT_DISPLAY_ORDER[0]
+      // Seed the draft tab with the folder's saved default agent if any;
+      // otherwise fall back to AGENT_DISPLAY_ORDER[0]. AgentSelector will
+      // further fall back to the first *available* agent if this one is
+      // disabled or not installed.
+      const folderDefault = folders.find(
+        (f) => f.id === folderId
+      )?.default_agent_type
+      const agentType: AgentType = folderDefault ?? AGENT_DISPLAY_ORDER[0]
       const tabId = makeNewConversationTabId()
       const newTab: TabItemInternal = {
         id: tabId,
@@ -593,7 +600,7 @@ export function TabProvider({ children }: TabProviderProps) {
       setActiveTabId(tabId)
       activateConversationPane()
     },
-    [acpDisconnect, activateConversationPane, t]
+    [acpDisconnect, activateConversationPane, folders, t]
   )
 
   const bindConversationTab = useCallback(
