@@ -809,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_absolutize_already_absolute() {
-        let abs = std::path::PathBuf::from("/already/absolute");
+        let abs = std::env::current_dir().expect("cwd");
         assert_eq!(absolutize(&abs), abs);
     }
 

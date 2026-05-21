@@ -581,12 +581,10 @@ impl OpenCodeParser {
                         });
                     }
                 }
-                "step-finish" => {
-                    if usage_from_step_finish.is_none() {
-                        usage_from_step_finish = value
-                            .get("tokens")
-                            .and_then(extract_opencode_usage_from_tokens);
-                    }
+                "step-finish" if usage_from_step_finish.is_none() => {
+                    usage_from_step_finish = value
+                        .get("tokens")
+                        .and_then(extract_opencode_usage_from_tokens);
                 }
                 _ => {}
             }

@@ -1030,11 +1030,12 @@ mod tests {
         let mut saw_recovery = false;
         for _ in 0..5 {
             match tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
-                Ok(Ok(evt)) if evt.channel == "pet://state" => {
-                    if evt.payload.as_ref() == &serde_json::json!("idle") {
-                        saw_recovery = true;
-                        break;
-                    }
+                Ok(Ok(evt))
+                    if evt.channel == "pet://state"
+                        && evt.payload.as_ref() == &serde_json::json!("idle") =>
+                {
+                    saw_recovery = true;
+                    break;
                 }
                 _ => {}
             }

@@ -2804,7 +2804,7 @@ pub async fn list_directory_entries(path: String) -> Result<Vec<DirectoryEntry>,
     }
 
     // Sort by name, case-insensitive
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    entries.sort_by_key(|a| a.name.to_lowercase());
 
     Ok(entries)
 }

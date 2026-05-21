@@ -98,14 +98,12 @@ impl CodexParser {
                             .map(|s| s.to_string());
                     }
                 }
-                "turn_context" => {
-                    if model.is_none() {
-                        model = value
-                            .get("payload")
-                            .and_then(|p| p.get("model"))
-                            .and_then(|m| m.as_str())
-                            .map(|s| s.to_string());
-                    }
+                "turn_context" if model.is_none() => {
+                    model = value
+                        .get("payload")
+                        .and_then(|p| p.get("model"))
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string());
                 }
                 "event_msg" => {
                     if let Some(payload) = value.get("payload") {
@@ -216,7 +214,7 @@ impl AgentParser for CodexParser {
             }
         }
 
-        conversations.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        conversations.sort_by_key(|b| std::cmp::Reverse(b.started_at));
         Ok(conversations)
     }
 
@@ -761,12 +759,9 @@ impl CodexParser {
                         let timestamp = parse_codex_timestamp(&value).unwrap_or_else(Utc::now);
 
                         match payload_type {
-                            "task_started" => {
-                                if context_window_max_tokens.is_none() {
-                                    context_window_max_tokens = payload
-                                        .get("model_context_window")
-                                        .and_then(|v| v.as_u64());
-                                }
+                            "task_started" if context_window_max_tokens.is_none() => {
+                                context_window_max_tokens =
+                                    payload.get("model_context_window").and_then(|v| v.as_u64());
                             }
                             "user_message" => {
                                 active_agent_count = 0;
@@ -826,44 +821,40 @@ impl CodexParser {
                                     completed_at: Some(timestamp),
                                 });
                             }
-                            "agent_message" => {
-                                if active_agent_count == 0 {
-                                    let text = payload
-                                        .get("message")
-                                        .and_then(|m| m.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
+                            "agent_message" if active_agent_count == 0 => {
+                                let text = payload
+                                    .get("message")
+                                    .and_then(|m| m.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                messages.push(UnifiedMessage {
+                                    id: format!("assistant-{}", messages.len()),
+                                    role: MessageRole::Assistant,
+                                    content: vec![ContentBlock::Text { text }],
+                                    timestamp,
+                                    usage: None,
+                                    duration_ms: None,
+                                    model: None,
+                                    completed_at: Some(timestamp),
+                                });
+                            }
+                            "agent_reasoning" if active_agent_count == 0 => {
+                                let text = payload
+                                    .get("text")
+                                    .and_then(|t| t.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                if !text.is_empty() {
                                     messages.push(UnifiedMessage {
-                                        id: format!("assistant-{}", messages.len()),
+                                        id: format!("thinking-{}", messages.len()),
                                         role: MessageRole::Assistant,
-                                        content: vec![ContentBlock::Text { text }],
+                                        content: vec![ContentBlock::Thinking { text }],
                                         timestamp,
                                         usage: None,
                                         duration_ms: None,
                                         model: None,
                                         completed_at: Some(timestamp),
                                     });
-                                }
-                            }
-                            "agent_reasoning" => {
-                                if active_agent_count == 0 {
-                                    let text = payload
-                                        .get("text")
-                                        .and_then(|t| t.as_str())
-                                        .unwrap_or("")
-                                        .to_string();
-                                    if !text.is_empty() {
-                                        messages.push(UnifiedMessage {
-                                            id: format!("thinking-{}", messages.len()),
-                                            role: MessageRole::Assistant,
-                                            content: vec![ContentBlock::Thinking { text }],
-                                            timestamp,
-                                            usage: None,
-                                            duration_ms: None,
-                                            model: None,
-                                            completed_at: Some(timestamp),
-                                        });
-                                    }
                                 }
                             }
                             "image_generation_end" => {

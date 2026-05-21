@@ -371,10 +371,9 @@ fn create_link_raw(src: &Path, dst: &Path) -> io::Result<bool> {
             // returned status with copy_mode = true so the UI can warn
             // the user that upgrades won't propagate automatically.
             copy_dir_recursive(src, dst).map_err(|copy_err| {
-                io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("junction failed ({junction_err}); copy fallback failed ({copy_err})"),
-                )
+                io::Error::other(format!(
+                    "junction failed ({junction_err}); copy fallback failed ({copy_err})"
+                ))
             })?;
             Ok(true)
         }
@@ -447,7 +446,7 @@ fn paths_equivalent(a: &Path, b: &Path) -> bool {
     {
         let a_s = a.as_os_str().to_string_lossy();
         let b_s = b.as_os_str().to_string_lossy();
-        return a_s.eq_ignore_ascii_case(b_s.as_ref());
+        a_s.eq_ignore_ascii_case(b_s.as_ref())
     }
     #[cfg(not(windows))]
     {

@@ -1704,7 +1704,7 @@
         "askAnythingPlaceholder": "Posez n'importe quelle question..."
       },
       "welcomePanel": {
-        "greeting": "Que souhaites-tu faire aujourd'hui ?",
+        "greeting": "Que souhaites-tu <highlight>faire aujourd'hui</highlight> ?",
         "tips": {
           "tileTabs": "Faites un clic droit sur un onglet de conversation et choisissez Affichage en mosaïque pour comparer plusieurs sessions côte à côte.",
           "pinTab": "Double-cliquez sur un onglet de conversation pour l'épingler : une nouvelle session ne le remplacera plus automatiquement.",

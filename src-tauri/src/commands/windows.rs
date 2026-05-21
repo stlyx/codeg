@@ -219,7 +219,7 @@ where
         } else {
             builder
         };
-        return builder.decorations(false);
+        builder.decorations(false)
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]

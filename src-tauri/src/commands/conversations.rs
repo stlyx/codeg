@@ -154,9 +154,11 @@ fn list_conversations_sync(
 
     // Apply sorting
     match sort_by.as_deref() {
-        Some("oldest") => all_conversations.sort_by(|a, b| a.started_at.cmp(&b.started_at)),
-        Some("messages") => all_conversations.sort_by(|a, b| b.message_count.cmp(&a.message_count)),
-        _ => all_conversations.sort_by(|a, b| b.started_at.cmp(&a.started_at)), // default: newest first
+        Some("oldest") => all_conversations.sort_by_key(|a| a.started_at),
+        Some("messages") => {
+            all_conversations.sort_by_key(|b| std::cmp::Reverse(b.message_count));
+        }
+        _ => all_conversations.sort_by_key(|b| std::cmp::Reverse(b.started_at)), // default: newest first
     }
 
     all_conversations
@@ -274,7 +276,7 @@ fn compute_folders(all_conversations: &[ConversationSummary]) -> Vec<FolderInfo>
     }
 
     let mut folders: Vec<FolderInfo> = folder_map.into_values().collect();
-    folders.sort_by(|a, b| b.conversation_count.cmp(&a.conversation_count));
+    folders.sort_by_key(|b| std::cmp::Reverse(b.conversation_count));
     folders
 }
 
@@ -545,7 +547,7 @@ fn compute_stats(all_conversations: &[ConversationSummary]) -> AgentStats {
             conversation_count,
         })
         .collect();
-    by_agent.sort_by(|a, b| b.conversation_count.cmp(&a.conversation_count));
+    by_agent.sort_by_key(|b| std::cmp::Reverse(b.conversation_count));
 
     AgentStats {
         total_conversations: all_conversations.len() as u32,
