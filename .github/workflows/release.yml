@@ -317,6 +317,10 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         uses: tauri-apps/tauri-action@v0.6.1
         env:
+          # The matrix-target sidecar is already staged and verified above.
+          # Skip the duplicate beforeBuildCommand sidecar pass so cross builds
+          # do not fall back to the runner host triple.
+          CODEG_SKIP_SIDECAR: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -341,10 +345,39 @@ jobs:
           includeUpdaterJson: false
           retryAttempts: 2
 
-      - name: Build and upload to draft release (Non-Linux arm64)
-        if: matrix.target != 'aarch64-unknown-linux-gnu'
+      - name: Build and upload to draft release (Windows)
+        if: contains(matrix.target, 'windows')
         uses: tauri-apps/tauri-action@v0.6.1
         env:
+          # The matrix-target sidecar is already staged and verified above.
+          # Skip the duplicate beforeBuildCommand sidecar pass so cross builds
+          # do not fall back to the runner host triple.
+          CODEG_SKIP_SIDECAR: "1"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.create-draft-release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseBody: ${{ needs.create-draft-release.outputs.release_body }}
+          releaseDraft: true
+          prerelease: ${{ needs.create-draft-release.outputs.prerelease }}
+          tauriScript: pnpm tauri
+          # Skip MSI bundling on Windows: tauri-apps/tauri#14681 — light.exe
+          # fails when externalBin is configured. NSIS installer + updater
+          # artifacts cover the same distribution channel.
+          args: --target ${{ matrix.target }} --bundles nsis,updater
+          includeUpdaterJson: true
+          retryAttempts: 2
+
+      - name: Build and upload to draft release (Non-Linux arm64)
+        if: matrix.target != 'aarch64-unknown-linux-gnu' && !contains(matrix.target, 'windows')
+        uses: tauri-apps/tauri-action@v0.6.1
+        env:
+          # The matrix-target sidecar is already staged and verified above.
+          # Skip the duplicate beforeBuildCommand sidecar pass so cross builds
+          # do not fall back to the runner host triple.
+          CODEG_SKIP_SIDECAR: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
