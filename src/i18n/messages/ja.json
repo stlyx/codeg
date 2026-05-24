@@ -1864,22 +1864,22 @@
         "noDetail": "No detail available yet.",
         "unknownAgent": "サブエージェント",
         "status": {
-          "running": "running",
-          "ok": "done",
+          "running": "実行中",
+          "ok": "完了",
           "err": {
-            "default": "failed",
-            "delegation_disabled": "disabled",
-            "depth_limit": "depth limit",
-            "invalid_agent_type": "bad agent",
-            "spawn_failed": "spawn failed",
-            "send_failed": "send failed",
-            "timeout": "timeout",
-            "canceled": "canceled",
-            "child_refusal": "subagent refused",
-            "child_max_tokens": "subagent token limit",
-            "child_max_turn_requests": "subagent request limit",
-            "child_empty": "subagent no output",
-            "child_unknown": "subagent unknown error"
+            "default": "失敗",
+            "delegation_disabled": "無効",
+            "depth_limit": "深さ上限",
+            "invalid_agent_type": "不正なエージェント",
+            "spawn_failed": "起動失敗",
+            "send_failed": "送信失敗",
+            "timeout": "タイムアウト",
+            "canceled": "キャンセル済み",
+            "child_refusal": "サブエージェント拒否",
+            "child_max_tokens": "サブエージェント: トークン上限",
+            "child_max_turn_requests": "サブエージェント: 要求上限",
+            "child_empty": "サブエージェント応答なし",
+            "child_unknown": "サブエージェント: エラー"
           }
         }
       },

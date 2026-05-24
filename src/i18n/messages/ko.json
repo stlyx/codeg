@@ -1864,22 +1864,22 @@
         "noDetail": "No detail available yet.",
         "unknownAgent": "하위 에이전트",
         "status": {
-          "running": "running",
-          "ok": "done",
+          "running": "실행 중",
+          "ok": "완료",
           "err": {
-            "default": "failed",
-            "delegation_disabled": "disabled",
-            "depth_limit": "depth limit",
-            "invalid_agent_type": "bad agent",
-            "spawn_failed": "spawn failed",
-            "send_failed": "send failed",
-            "timeout": "timeout",
-            "canceled": "canceled",
-            "child_refusal": "subagent refused",
-            "child_max_tokens": "subagent token limit",
-            "child_max_turn_requests": "subagent request limit",
-            "child_empty": "subagent no output",
-            "child_unknown": "subagent unknown error"
+            "default": "실패",
+            "delegation_disabled": "비활성화됨",
+            "depth_limit": "깊이 제한",
+            "invalid_agent_type": "잘못된 에이전트",
+            "spawn_failed": "시작 실패",
+            "send_failed": "전송 실패",
+            "timeout": "시간 초과",
+            "canceled": "취소됨",
+            "child_refusal": "서브에이전트 거부",
+            "child_max_tokens": "서브에이전트: 토큰 한도",
+            "child_max_turn_requests": "서브에이전트: 요청 한도",
+            "child_empty": "서브에이전트 응답 없음",
+            "child_unknown": "서브에이전트: 오류"
           }
         }
       },

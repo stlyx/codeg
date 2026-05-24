@@ -1864,22 +1864,22 @@
         "noDetail": "No detail available yet.",
         "unknownAgent": "Subagente",
         "status": {
-          "running": "running",
-          "ok": "done",
+          "running": "em execução",
+          "ok": "concluído",
           "err": {
-            "default": "failed",
-            "delegation_disabled": "disabled",
-            "depth_limit": "depth limit",
-            "invalid_agent_type": "bad agent",
-            "spawn_failed": "spawn failed",
-            "send_failed": "send failed",
-            "timeout": "timeout",
-            "canceled": "canceled",
-            "child_refusal": "subagent refused",
-            "child_max_tokens": "subagent token limit",
-            "child_max_turn_requests": "subagent request limit",
-            "child_empty": "subagent no output",
-            "child_unknown": "subagent unknown error"
+            "default": "falhou",
+            "delegation_disabled": "desativado",
+            "depth_limit": "limite de profundidade",
+            "invalid_agent_type": "agente inválido",
+            "spawn_failed": "falha ao iniciar",
+            "send_failed": "falha ao enviar",
+            "timeout": "tempo esgotado",
+            "canceled": "cancelado",
+            "child_refusal": "subagente recusou",
+            "child_max_tokens": "subagente: limite de tokens",
+            "child_max_turn_requests": "subagente: limite de solicitações",
+            "child_empty": "subagente sem saída",
+            "child_unknown": "subagente: erro"
           }
         }
       },

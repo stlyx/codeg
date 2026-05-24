@@ -1809,4 +1809,170 @@ mod tests {
             "completed"
         );
     }
+
+    // -- Production-path fanout coverage ----------------------------------
+    //
+    // Every other emitter test in this module uses `MockEventEmitter`. The
+    // production wiring goes through `ConnectionManagerEventEmitter`, which
+    // resolves `(state, emitter)` against the live `ConnectionManager` and
+    // hands the event to `emit_with_state` so it fans out to (1) the parent
+    // connection's `ConnectionEventStream` (the WS attach path) and (2) the
+    // `InternalEventBus` (the lifecycle/pet/chat-channel subscriber path).
+    // These tests exercise that real fanout end-to-end so a regression in
+    // `get_state_and_emitter` lookup, `emit_with_state` routing, or the
+    // `EventEmitter::WebOnly { bus, .. }` wiring is caught here even when
+    // every mock-backed test stays green.
+
+    #[tokio::test]
+    async fn real_emitter_fans_out_delegation_completed_to_parent_stream_and_bus() {
+        use crate::acp::delegation::event_emitter::ConnectionManagerEventEmitter;
+        use crate::acp::manager::ConnectionManager;
+        use crate::acp::types::AcpEvent;
+        use crate::web::event_bridge::{EventEmitter, WebEventBroadcaster};
+
+        // Real ConnectionManager + fake parent wired to a WebOnly emitter so
+        // the InternalEventBus gets typed envelopes and we can subscribe to
+        // verify the lifecycle-path delivery alongside the per-connection
+        // stream delivery.
+        let manager = ConnectionManager::new();
+        let broadcaster = Arc::new(WebEventBroadcaster::new());
+        let parent_emitter = EventEmitter::test_web_only(broadcaster);
+        let bus = parent_emitter
+            .acp_event_bus()
+            .expect("WebOnly emitter must expose an InternalEventBus");
+        manager
+            .insert_test_connection(
+                "parent-conn",
+                AgentType::ClaudeCode,
+                None,
+                parent_emitter,
+            )
+            .await;
+
+        // Subscribe BEFORE triggering events — broadcast channels drop
+        // sends that happen with no receivers registered.
+        let mut bus_rx = bus.subscribe();
+        let (parent_state, _) = manager
+            .get_state_and_emitter("parent-conn")
+            .await
+            .expect("parent just inserted");
+        let mut stream_rx = parent_state.read().await.event_stream().subscribe();
+
+        // Build the broker with the PRODUCTION emitter; meta writer can stay
+        // noop because this test is asserting the event-fanout invariant.
+        let mock_spawner = Arc::new(MockSpawner::new());
+        mock_spawner.queue_spawn(Ok("child-conn-real".into())).await;
+        mock_spawner.queue_send(Ok(77)).await;
+        let real_emitter = Arc::new(ConnectionManagerEventEmitter {
+            manager: Arc::new(manager.clone_ref()),
+        });
+        let broker = DelegationBroker::with_writers(
+            mock_spawner.clone() as Arc<dyn ConnectionSpawner>,
+            shallow_lookup(),
+            Arc::new(crate::acp::delegation::meta_writer::NoopMetaWriter)
+                as Arc<dyn crate::acp::delegation::meta_writer::DelegationMetaWriter>,
+            real_emitter as Arc<dyn crate::acp::delegation::event_emitter::DelegationEventEmitter>,
+        );
+
+        // Park a pending entry then trigger cancel_by_parent to drive the
+        // production emit path. `request()` hard-codes parent_connection_id
+        // = "parent-conn" which matches the insert above.
+        let driver = {
+            let broker = broker.clone();
+            tokio::spawn(async move { broker.handle_request(request(1, "pt-fanout")).await })
+        };
+        while broker.pending_count().await == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        broker.cancel_by_parent("parent-conn").await;
+        let _ = driver.await.unwrap();
+
+        // Per-connection stream (WS attach delivery path) must receive the
+        // envelope tagged with the right connection + payload shape.
+        let envelope = tokio::time::timeout(Duration::from_millis(500), stream_rx.recv())
+            .await
+            .expect("per-connection stream should receive DelegationCompleted within 500ms")
+            .expect("envelope recv must not error");
+        assert_eq!(envelope.connection_id, "parent-conn");
+        match &envelope.payload {
+            AcpEvent::DelegationCompleted {
+                parent_tool_use_id,
+                child_connection_id,
+                child_conversation_id,
+                result,
+                ..
+            } => {
+                assert_eq!(parent_tool_use_id, "pt-fanout");
+                assert_eq!(child_connection_id, "child-conn-real");
+                assert_eq!(*child_conversation_id, 77);
+                match result {
+                    DelegationResultSummary::Err { error_code } => {
+                        assert_eq!(error_code, "canceled");
+                    }
+                    other => panic!("expected Err{{canceled}}, got {other:?}"),
+                }
+            }
+            other => panic!("expected DelegationCompleted, got {other:?}"),
+        }
+
+        // InternalEventBus (lifecycle/pet/chat-channel subscriber path) must
+        // also receive the same envelope — proves the WebOnly emitter's bus
+        // arm in `emit_with_state` is reached.
+        let bus_envelope = tokio::time::timeout(Duration::from_millis(500), bus_rx.recv())
+            .await
+            .expect("InternalEventBus should receive DelegationCompleted within 500ms")
+            .expect("bus recv must not error");
+        assert_eq!(bus_envelope.connection_id, "parent-conn");
+        assert!(matches!(
+            bus_envelope.payload,
+            AcpEvent::DelegationCompleted { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn real_emitter_is_silent_no_op_when_parent_already_detached() {
+        // Parent torn down mid-delegation: `get_state_and_emitter` returns
+        // None, the emit silently drops, BUT the broker still drains its
+        // pending table and surfaces the outcome to the awaiting caller.
+        // This is the "parent disappeared before terminal" path that the
+        // mock-backed tests can't observe.
+        use crate::acp::delegation::event_emitter::ConnectionManagerEventEmitter;
+        use crate::acp::manager::ConnectionManager;
+
+        let manager = ConnectionManager::new();
+        // Intentionally no insert_test_connection — parent is absent.
+        let real_emitter = Arc::new(ConnectionManagerEventEmitter {
+            manager: Arc::new(manager.clone_ref()),
+        });
+        let mock_spawner = Arc::new(MockSpawner::new());
+        mock_spawner.queue_spawn(Ok("c-orphan".into())).await;
+        mock_spawner.queue_send(Ok(1)).await;
+        let broker = DelegationBroker::with_writers(
+            mock_spawner.clone() as Arc<dyn ConnectionSpawner>,
+            shallow_lookup(),
+            Arc::new(crate::acp::delegation::meta_writer::NoopMetaWriter)
+                as Arc<dyn crate::acp::delegation::meta_writer::DelegationMetaWriter>,
+            real_emitter as Arc<dyn crate::acp::delegation::event_emitter::DelegationEventEmitter>,
+        );
+
+        let driver = {
+            let broker = broker.clone();
+            tokio::spawn(async move { broker.handle_request(request(1, "pt-orphan")).await })
+        };
+        while broker.pending_count().await == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        broker.cancel_by_parent("parent-conn").await;
+        let outcome = driver.await.unwrap();
+
+        assert!(matches!(
+            outcome,
+            DelegationOutcome::Err { ref code, .. } if code == "canceled"
+        ));
+        assert_eq!(
+            broker.pending_count().await,
+            0,
+            "broker must drain pending even when no parent exists to receive the emit"
+        );
+    }
 }

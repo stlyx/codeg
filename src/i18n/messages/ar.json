@@ -1864,22 +1864,22 @@
         "noDetail": "No detail available yet.",
         "unknownAgent": "وكيل فرعي",
         "status": {
-          "running": "running",
-          "ok": "done",
+          "running": "قيد التشغيل",
+          "ok": "اكتمل",
           "err": {
-            "default": "failed",
-            "delegation_disabled": "disabled",
-            "depth_limit": "depth limit",
-            "invalid_agent_type": "bad agent",
-            "spawn_failed": "spawn failed",
-            "send_failed": "send failed",
-            "timeout": "timeout",
-            "canceled": "canceled",
-            "child_refusal": "subagent refused",
-            "child_max_tokens": "subagent token limit",
-            "child_max_turn_requests": "subagent request limit",
-            "child_empty": "subagent no output",
-            "child_unknown": "subagent unknown error"
+            "default": "فشل",
+            "delegation_disabled": "معطل",
+            "depth_limit": "حد العمق",
+            "invalid_agent_type": "وكيل غير صالح",
+            "spawn_failed": "فشل البدء",
+            "send_failed": "فشل الإرسال",
+            "timeout": "انتهت المهلة",
+            "canceled": "ملغى",
+            "child_refusal": "رفض الوكيل الفرعي",
+            "child_max_tokens": "الوكيل الفرعي: حد الرموز",
+            "child_max_turn_requests": "الوكيل الفرعي: حد الطلبات",
+            "child_empty": "الوكيل الفرعي بدون استجابة",
+            "child_unknown": "الوكيل الفرعي: خطأ"
           }
         }
       },
