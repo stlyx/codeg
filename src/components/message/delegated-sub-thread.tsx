@@ -74,7 +74,6 @@ type ParsedInput = {
   agentType: AgentType | null
   task: string | null
   workingDir: string | null
-  timeoutSeconds: number | null
 }
 
 const KNOWN_AGENT_TYPES: ReadonlySet<string> = new Set<AgentType>([
@@ -175,7 +174,6 @@ const EMPTY_PARSED_INPUT: ParsedInput = {
   agentType: null,
   task: null,
   workingDir: null,
-  timeoutSeconds: null,
 }
 
 // Wrapper keys that hosts use to nest the actual tool arguments. JSON-RPC
@@ -214,8 +212,7 @@ function findDelegationArgs(
   if (
     typeof obj.task === "string" ||
     typeof obj.agent_type === "string" ||
-    typeof obj.working_dir === "string" ||
-    typeof obj.timeout_seconds === "number"
+    typeof obj.working_dir === "string"
   ) {
     return obj
   }
@@ -260,8 +257,6 @@ function parseInput(raw: string | null | undefined): ParsedInput {
     agentType: at && KNOWN_AGENT_TYPES.has(at) ? (at as AgentType) : null,
     task: typeof obj.task === "string" ? obj.task : null,
     workingDir: typeof obj.working_dir === "string" ? obj.working_dir : null,
-    timeoutSeconds:
-      typeof obj.timeout_seconds === "number" ? obj.timeout_seconds : null,
   }
 }
 

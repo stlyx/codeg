@@ -16,9 +16,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 
 use crate::acp::delegation::broker::DelegationBroker;
-use crate::acp::delegation::transport::{read_frame, write_frame, BrokerRequest, BrokerResponse};
+use crate::acp::delegation::transport::{
+    read_frame, write_frame, BrokerCancelRequest, BrokerMessage, BrokerRequest, BrokerResponse,
+};
 use crate::acp::delegation::types::{DelegationOutcome, DelegationRequest};
 use crate::models::AgentType;
+use serde_json::Value;
 
 /// Pluggable "what conversation is this parent currently in?" lookup. The
 /// production impl wraps `ConnectionManager.get_state`; tests use an
@@ -155,15 +158,43 @@ impl DelegationListener {
     where
         C: AsyncReadExt + AsyncWriteExt + Unpin,
     {
-        let req: BrokerRequest = read_frame(conn).await?;
-        let outcome = self.process(req).await;
-        let resp = BrokerResponse {
-            outcome: serde_json::to_value(&outcome).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, format!("encode: {e}"))
-            })?,
+        let msg: BrokerMessage = read_frame(conn).await?;
+        let resp = match msg {
+            BrokerMessage::Call(req) => {
+                let outcome = self.process(req).await;
+                BrokerResponse {
+                    outcome: serde_json::to_value(&outcome).map_err(|e| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("encode: {e}"),
+                        )
+                    })?,
+                }
+            }
+            BrokerMessage::Cancel(cancel) => {
+                self.process_cancel(cancel).await;
+                // Empty ack — the companion only uses this to detect the
+                // listener has at least seen the cancel before dropping.
+                BrokerResponse {
+                    outcome: Value::Null,
+                }
+            }
         };
         write_frame(conn, &resp).await?;
         Ok(())
+    }
+
+    /// Validate token + dispatch cancel to the broker. Unknown tokens and
+    /// parent-mismatched cancels are silently dropped — there's no LLM on
+    /// the receiving end of this method to react to errors.
+    async fn process_cancel(&self, cancel: BrokerCancelRequest) {
+        let Some(_entry) = self.tokens.lookup(&cancel.token).await else {
+            return;
+        };
+        let reason = cancel.reason.unwrap_or_else(|| "mcp client canceled".into());
+        self.broker
+            .cancel_by_external_handle(&cancel.external_handle, reason)
+            .await;
     }
 
     async fn process(&self, req: BrokerRequest) -> DelegationOutcome {
@@ -214,7 +245,6 @@ impl DelegationListener {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .or_else(|| Some(entry.working_dir.to_string_lossy().to_string()));
-        let timeout_seconds = req.input.get("timeout_seconds").and_then(|v| v.as_u64());
 
         let delegation_req = DelegationRequest {
             parent_connection_id: req.parent_connection_id,
@@ -223,7 +253,7 @@ impl DelegationListener {
             agent_type,
             task,
             working_dir,
-            timeout_seconds,
+            external_handle: req.external_handle,
         };
         self.broker.handle_request(delegation_req).await
     }
@@ -323,6 +353,7 @@ mod tests {
             token: "tok".into(),
             parent_connection_id: "parent-conn".into(),
             parent_tool_use_id: "pt-1".into(),
+            external_handle: None,
             input,
         }
     }
@@ -469,13 +500,14 @@ mod tests {
             listener.serve_one(&mut server).await.unwrap();
         });
 
-        let req = BrokerRequest {
+        let msg = BrokerMessage::Call(BrokerRequest {
             token: "tok".into(),
             parent_connection_id: "parent-conn".into(),
             parent_tool_use_id: "pt-1".into(),
+            external_handle: None,
             input: json!({"agent_type": "codex", "task": "do x"}),
-        };
-        write_frame(&mut client, &req).await.unwrap();
+        });
+        write_frame(&mut client, &msg).await.unwrap();
         let resp: BrokerResponse = read_frame(&mut client).await.unwrap();
         completer.await.unwrap();
         server_task.await.unwrap();
@@ -483,6 +515,68 @@ mod tests {
         assert_eq!(resp.outcome["kind"], "ok");
         assert_eq!(resp.outcome["text"], "result-text");
         assert_eq!(resp.outcome["child_conversation_id"], 42);
+    }
+
+    #[tokio::test]
+    async fn cancel_message_routed_to_broker() {
+        let mock = Arc::new(MockSpawner::new());
+        mock.queue_spawn(Ok("c-cancel".into())).await;
+        mock.queue_send(Ok(99)).await;
+        let broker = make_broker(mock.clone());
+        let tokens = Arc::new(TokenRegistry::default());
+        tokens
+            .register(
+                "tok".into(),
+                TokenEntry {
+                    parent_connection_id: "parent-conn".into(),
+                    working_dir: PathBuf::from("/tmp"),
+                },
+            )
+            .await;
+        let listener = make_listener(broker.clone(), tokens, Some(1));
+
+        // Park a delegation call with a known external_handle.
+        let driver = {
+            let broker = broker.clone();
+            tokio::spawn(async move {
+                let req = DelegationRequest {
+                    parent_connection_id: "parent-conn".into(),
+                    parent_conversation_id: 1,
+                    parent_tool_use_id: "pt-cancel".into(),
+                    agent_type: AgentType::Codex,
+                    task: "do x".into(),
+                    working_dir: None,
+                    external_handle: Some("h-1".into()),
+                };
+                broker.handle_request(req).await
+            })
+        };
+        while broker.pending_count().await == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        // Drive a cancel through the listener — listener should ack with
+        // an empty BrokerResponse and the broker should drain the pending.
+        let (mut client, mut server) = duplex(8 * 1024);
+        let server_task = tokio::spawn(async move {
+            listener.serve_one(&mut server).await.unwrap();
+        });
+
+        let cancel_msg = BrokerMessage::Cancel(BrokerCancelRequest {
+            token: "tok".into(),
+            external_handle: "h-1".into(),
+            reason: Some("from test".into()),
+        });
+        write_frame(&mut client, &cancel_msg).await.unwrap();
+        let resp: BrokerResponse = read_frame(&mut client).await.unwrap();
+        assert!(resp.outcome.is_null(), "cancel ack must be null");
+        server_task.await.unwrap();
+
+        let outcome = driver.await.unwrap();
+        match outcome {
+            DelegationOutcome::Err { code, .. } => assert_eq!(code, "canceled"),
+            other => panic!("expected canceled, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -537,7 +631,6 @@ mod tests {
             .set_config(DelegationConfig {
                 enabled: true,
                 depth_limit: 8,
-                default_timeout: Duration::from_secs(5),
             })
             .await;
         let tokens = Arc::new(TokenRegistry::default());

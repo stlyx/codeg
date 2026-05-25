@@ -11,15 +11,28 @@
 //!
 //! All three are required and the binary exits early if any is missing.
 //! Everything heavyweight — JSON-RPC dispatch, UDS round-trip, MCP tool
-//! schema — lives in `codeg_lib::acp::delegation::{companion, transport}`
-//! so it's unit-testable without spawning a process.
+//! schema, cancellation tracking — lives in
+//! `codeg_lib::acp::delegation::{companion, transport}` so it's
+//! unit-testable without spawning a process.
+//!
+//! Stdin lines are dispatched concurrently: synchronous methods
+//! (`initialize`, `tools/list`) emit a response inline, `tools/call`
+//! spawns a tokio task that drives the UDS round-trip racing a cancel
+//! channel, and `notifications/cancelled` wakes the relevant task without
+//! blocking the reader. Stdout writes are serialized through a mutex so
+//! interleaved frames never corrupt the wire.
 
 use std::io::Write;
 use std::process::ExitCode;
+use std::sync::Arc;
 
-use codeg_lib::acp::delegation::companion::{handle_line, CompanionContext};
+use codeg_lib::acp::delegation::companion::{
+    dispatch_line, drain_and_cancel_all, CompanionContext, InflightCalls, JsonRpcResponse,
+    LineAction,
+};
 use codeg_lib::acp::delegation::parent_watcher::{wait_for_parent_exit, DEFAULT_POLL_INTERVAL};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Stdout};
+use tokio::sync::Mutex;
 
 struct Args {
     parent_connection_id: String,
@@ -87,6 +100,19 @@ fn parse_args() -> Result<Args, String> {
     })
 }
 
+/// Serialize a `JsonRpcResponse` and append a newline; small enough to keep
+/// inline so the write-mutex critical section stays tight.
+async fn write_response(stdout: &Arc<Mutex<Stdout>>, resp: &JsonRpcResponse) -> std::io::Result<()> {
+    let serialized = serde_json::to_string(resp).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("encode: {e}"))
+    })?;
+    let mut guard = stdout.lock().await;
+    guard.write_all(serialized.as_bytes()).await?;
+    guard.write_all(b"\n").await?;
+    guard.flush().await?;
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let args = match parse_args() {
@@ -103,7 +129,8 @@ async fn main() -> ExitCode {
     };
 
     let stdin = tokio::io::stdin();
-    let mut stdout = tokio::io::stdout();
+    let stdout = Arc::new(Mutex::new(tokio::io::stdout()));
+    let inflight = Arc::new(InflightCalls::new());
     let mut lines = BufReader::new(stdin).lines();
 
     // Optional parent-PID watchdog. Composed as a separate future so the
@@ -121,10 +148,18 @@ async fn main() -> ExitCode {
     loop {
         tokio::select! {
             // Bias toward parent-exit detection: if the watchdog fires
-            // mid-`handle_line` we want to bail rather than finish a
-            // round-trip whose response no one will read.
+            // mid-stdin-read we want to bail rather than finish a round-trip
+            // whose response no one will read.
             biased;
             _ = &mut watchdog => {
+                // Best-effort: cancel every in-flight delegation BEFORE we
+                // hard-exit so the broker doesn't park each pending row
+                // on `rx.await` waiting for a TurnComplete it can never
+                // deliver. cancel_by_parent on the codeg main side is the
+                // ultimate backstop, but firing the explicit cancels here
+                // closes the window between MCP shutdown and parent ACP
+                // disconnect detection on the codeg side.
+                drain_and_cancel_all(&ctx, &inflight, "parent process exited").await;
                 let _ = writeln!(
                     std::io::stderr(),
                     "codeg-mcp: parent process exited, shutting down"
@@ -140,37 +175,49 @@ async fn main() -> ExitCode {
             line_result = lines.next_line() => {
                 let line = match line_result {
                     Ok(Some(l)) => l,
-                    Ok(None) => break, // parent closed stdin → graceful exit
+                    Ok(None) => {
+                        // Parent closed stdin. Same shutdown rationale as
+                        // the watchdog branch: drain pending delegations
+                        // before returning so the broker can resolve them
+                        // immediately.
+                        drain_and_cancel_all(&ctx, &inflight, "companion stdio closed").await;
+                        break;
+                    }
                     Err(e) => {
                         let _ = writeln!(std::io::stderr(), "codeg-mcp: read stdin: {e}");
+                        drain_and_cancel_all(&ctx, &inflight, "companion stdin error").await;
                         return ExitCode::from(1);
                     }
                 };
-                let line = line.trim();
+                let line = line.trim().to_string();
                 if line.is_empty() {
                     continue;
                 }
-                if let Some(resp) = handle_line(&ctx, line).await {
-                    match serde_json::to_string(&resp) {
-                        Ok(serialized) => {
-                            if let Err(e) = stdout.write_all(serialized.as_bytes()).await {
-                                let _ = writeln!(std::io::stderr(), "codeg-mcp: write stdout: {e}");
-                                return ExitCode::from(1);
-                            }
-                            if let Err(e) = stdout.write_all(b"\n").await {
-                                let _ = writeln!(std::io::stderr(), "codeg-mcp: write stdout: {e}");
-                                return ExitCode::from(1);
-                            }
-                            if let Err(e) = stdout.flush().await {
-                                let _ = writeln!(std::io::stderr(), "codeg-mcp: flush stdout: {e}");
-                                return ExitCode::from(1);
-                            }
-                        }
-                        Err(e) => {
-                            let _ = writeln!(std::io::stderr(), "codeg-mcp: encode response: {e}");
+                let action = dispatch_line(&ctx, inflight.clone(), &line).await;
+                match action {
+                    LineAction::Respond(resp) => {
+                        if let Err(e) = write_response(&stdout, &resp).await {
+                            let _ = writeln!(std::io::stderr(), "codeg-mcp: write stdout: {e}");
                             return ExitCode::from(1);
                         }
                     }
+                    LineAction::Spawn(spawned) => {
+                        // Drive the round-trip in a detached task so the
+                        // stdin reader stays responsive — the next line may
+                        // be a `notifications/cancelled` for THIS request.
+                        let stdout = stdout.clone();
+                        tokio::spawn(async move {
+                            if let Some(resp) = spawned.future.await {
+                                if let Err(e) = write_response(&stdout, &resp).await {
+                                    let _ = writeln!(
+                                        std::io::stderr(),
+                                        "codeg-mcp: write stdout: {e}"
+                                    );
+                                }
+                            }
+                        });
+                    }
+                    LineAction::Silent => {}
                 }
             }
         }

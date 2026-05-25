@@ -1,21 +1,21 @@
 //! Delegation settings persistence + Tauri/HTTP command surface.
 //!
-//! Three knobs survive across restarts:
+//! Two knobs survive across restarts:
 //!   * `delegation.enabled` — feature kill switch (default true)
 //!   * `delegation.depth_limit` — max chain depth a child is allowed to sit at
-//!   * `delegation.default_timeout_seconds` — broker fallback when the LLM
-//!     omits `timeout_seconds`
 //!
-//! On startup `apply_persisted_config` reads all three keys from
-//! `app_metadata` and pushes them into the live `DelegationBroker`. On UI
-//! save, `set_delegation_settings_core` writes the three keys and
-//! immediately re-applies — the broker has no concept of "pending config",
-//! it just owns the current `DelegationConfig`.
+//! On startup `apply_persisted_config` reads both keys from `app_metadata`
+//! and pushes them into the live `DelegationBroker`. On UI save,
+//! `set_delegation_settings_core` writes the two keys and immediately
+//! re-applies — the broker has no concept of "pending config", it just
+//! owns the current `DelegationConfig`. The previously-persisted
+//! `delegation.default_timeout_seconds` key is ignored on read (the broker
+//! no longer applies a timeout; cancellation flows through MCP
+//! `notifications/cancelled` instead).
 
 use std::path::PathBuf;
 #[cfg(any(test, feature = "tauri-runtime"))]
 use std::sync::Arc;
-use std::time::Duration;
 
 use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
@@ -26,12 +26,9 @@ use crate::db::service::app_metadata_service;
 
 pub const KEY_DELEGATION_ENABLED: &str = "delegation.enabled";
 pub const KEY_DELEGATION_DEPTH: &str = "delegation.depth_limit";
-pub const KEY_DELEGATION_TIMEOUT: &str = "delegation.default_timeout_seconds";
 
 pub const DEPTH_MIN: u32 = 1;
 pub const DEPTH_MAX: u32 = 8;
-pub const TIMEOUT_MIN_SECS: u64 = 0;
-pub const TIMEOUT_MAX_SECS: u64 = 3600;
 
 /// Newtype so the Tauri managed-state lookup can distinguish the delegation
 /// UDS path from other `PathBuf`s in the state graph.
@@ -42,7 +39,6 @@ pub struct DelegationSocketPath(pub PathBuf);
 pub struct DelegationSettings {
     pub enabled: bool,
     pub depth_limit: u32,
-    pub default_timeout_seconds: u64,
 }
 
 impl Default for DelegationSettings {
@@ -50,7 +46,6 @@ impl Default for DelegationSettings {
         Self {
             enabled: true,
             depth_limit: 2,
-            default_timeout_seconds: 600,
         }
     }
 }
@@ -60,9 +55,6 @@ impl DelegationSettings {
         Self {
             enabled: self.enabled,
             depth_limit: self.depth_limit.clamp(DEPTH_MIN, DEPTH_MAX),
-            default_timeout_seconds: self
-                .default_timeout_seconds
-                .clamp(TIMEOUT_MIN_SECS, TIMEOUT_MAX_SECS),
         }
     }
 
@@ -70,14 +62,13 @@ impl DelegationSettings {
         DelegationConfig {
             enabled: self.enabled,
             depth_limit: self.depth_limit,
-            default_timeout: Duration::from_secs(self.default_timeout_seconds),
         }
     }
 }
 
-/// Read all three keys from `app_metadata`, falling back to defaults for any
-/// missing or malformed value. Never errors hard — corrupt persistence is
-/// treated as "no preference yet."
+/// Read all persisted keys from `app_metadata`, falling back to defaults
+/// for any missing or malformed value. Never errors hard — corrupt
+/// persistence is treated as "no preference yet."
 pub async fn load_delegation_settings(conn: &DatabaseConnection) -> DelegationSettings {
     let mut settings = DelegationSettings::default();
     if let Ok(Some(raw)) = app_metadata_service::get_value(conn, KEY_DELEGATION_ENABLED).await {
@@ -88,11 +79,6 @@ pub async fn load_delegation_settings(conn: &DatabaseConnection) -> DelegationSe
     if let Ok(Some(raw)) = app_metadata_service::get_value(conn, KEY_DELEGATION_DEPTH).await {
         if let Ok(v) = raw.parse::<u32>() {
             settings.depth_limit = v;
-        }
-    }
-    if let Ok(Some(raw)) = app_metadata_service::get_value(conn, KEY_DELEGATION_TIMEOUT).await {
-        if let Ok(v) = raw.parse::<u64>() {
-            settings.default_timeout_seconds = v;
         }
     }
     settings.clamped()
@@ -121,13 +107,6 @@ pub async fn set_delegation_settings_core(
         conn,
         KEY_DELEGATION_DEPTH,
         &clamped.depth_limit.to_string(),
-    )
-    .await
-    .map_err(AppCommandError::from)?;
-    app_metadata_service::upsert_value(
-        conn,
-        KEY_DELEGATION_TIMEOUT,
-        &clamped.default_timeout_seconds.to_string(),
     )
     .await
     .map_err(AppCommandError::from)?;
@@ -199,22 +178,9 @@ mod tests {
         let s = DelegationSettings {
             enabled: true,
             depth_limit: 99,
-            default_timeout_seconds: 9999,
         }
         .clamped();
         assert_eq!(s.depth_limit, DEPTH_MAX);
-        assert_eq!(s.default_timeout_seconds, TIMEOUT_MAX_SECS);
-    }
-
-    #[test]
-    fn settings_allow_zero_timeout() {
-        let s = DelegationSettings {
-            enabled: true,
-            depth_limit: 2,
-            default_timeout_seconds: 0,
-        }
-        .clamped();
-        assert_eq!(s.default_timeout_seconds, 0);
     }
 
     #[tokio::test]
@@ -223,7 +189,6 @@ mod tests {
         let settings = load_delegation_settings(&db.conn).await;
         assert!(settings.enabled);
         assert_eq!(settings.depth_limit, 2);
-        assert_eq!(settings.default_timeout_seconds, 600);
     }
 
     #[tokio::test]
@@ -233,27 +198,20 @@ mod tests {
         let desired = DelegationSettings {
             enabled: false,
             depth_limit: 3,
-            default_timeout_seconds: 120,
         };
         let saved = set_delegation_settings_core(&db.conn, &broker, desired)
             .await
             .unwrap();
         assert!(!saved.enabled);
         assert_eq!(saved.depth_limit, 3);
-        assert_eq!(saved.default_timeout_seconds, 120);
 
         let loaded = load_delegation_settings(&db.conn).await;
         assert_eq!(loaded.enabled, saved.enabled);
         assert_eq!(loaded.depth_limit, saved.depth_limit);
-        assert_eq!(
-            loaded.default_timeout_seconds,
-            saved.default_timeout_seconds
-        );
 
         let cfg = broker.config_snapshot().await;
         assert!(!cfg.enabled);
         assert_eq!(cfg.depth_limit, 3);
-        assert_eq!(cfg.default_timeout, Duration::from_secs(120));
     }
 
     #[tokio::test]
@@ -266,36 +224,10 @@ mod tests {
             DelegationSettings {
                 enabled: true,
                 depth_limit: 999,
-                default_timeout_seconds: 9999,
             },
         )
         .await
         .unwrap();
         assert_eq!(saved.depth_limit, DEPTH_MAX);
-        assert_eq!(saved.default_timeout_seconds, TIMEOUT_MAX_SECS);
-    }
-
-    #[tokio::test]
-    async fn set_persists_zero_timeout_and_applies_to_broker() {
-        let db = crate::db::test_helpers::fresh_in_memory_db().await;
-        let broker = make_broker();
-        let saved = set_delegation_settings_core(
-            &db.conn,
-            &broker,
-            DelegationSettings {
-                enabled: true,
-                depth_limit: 2,
-                default_timeout_seconds: 0,
-            },
-        )
-        .await
-        .unwrap();
-        assert_eq!(saved.default_timeout_seconds, 0);
-
-        let loaded = load_delegation_settings(&db.conn).await;
-        assert_eq!(loaded.default_timeout_seconds, 0);
-
-        let cfg = broker.config_snapshot().await;
-        assert_eq!(cfg.default_timeout, Duration::from_secs(0));
     }
 }

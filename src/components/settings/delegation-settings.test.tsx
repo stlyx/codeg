@@ -39,7 +39,6 @@ function settings(
   return {
     enabled: true,
     depth_limit: 2,
-    default_timeout_seconds: 600,
     ...overrides,
   }
 }
@@ -50,42 +49,33 @@ beforeEach(() => {
 })
 
 describe("DelegationSettingsSection", () => {
-  it("allows zero as the minimum timeout and describes the no-timeout sentinel", async () => {
-    mockGetDelegationSettings.mockResolvedValue(
-      settings({ default_timeout_seconds: 0 })
-    )
+  it("renders the enable switch and depth input", async () => {
+    mockGetDelegationSettings.mockResolvedValue(settings())
 
     renderWithIntl()
 
-    const timeoutInput = await screen.findByLabelText(
-      "Default timeout (seconds)"
-    )
-    expect(timeoutInput).toHaveAttribute("min", "0")
-    expect(timeoutInput).toHaveValue(0)
     expect(
-      screen.getByText(
-        /0 disables the timeout; the child can run until it finishes/
-      )
+      await screen.findByLabelText("Maximum delegation depth")
     ).toBeInTheDocument()
+    expect(screen.getByLabelText("Enable delegation")).toBeInTheDocument()
+    // No timeout knob anymore — cancel flows through MCP notifications.
+    expect(screen.queryByLabelText(/timeout/i)).not.toBeInTheDocument()
   })
 
-  it("saves zero timeout without clamping it back to the old minimum", async () => {
+  it("saves the depth_limit and enabled flag", async () => {
     mockGetDelegationSettings.mockResolvedValue(settings())
     mockSetDelegationSettings.mockImplementation(async (next) => next)
 
     renderWithIntl()
 
-    const timeoutInput = await screen.findByLabelText(
-      "Default timeout (seconds)"
-    )
-    fireEvent.change(timeoutInput, { target: { value: "0" } })
+    const depthInput = await screen.findByLabelText("Maximum delegation depth")
+    fireEvent.change(depthInput, { target: { value: "5" } })
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
 
     await waitFor(() => {
       expect(mockSetDelegationSettings).toHaveBeenCalledWith({
         enabled: true,
-        depth_limit: 2,
-        default_timeout_seconds: 0,
+        depth_limit: 5,
       })
     })
   })

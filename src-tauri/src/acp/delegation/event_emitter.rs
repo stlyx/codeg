@@ -12,7 +12,9 @@
 //!
 //! 1. `complete_call` — happy path (kind=ok) and error completions
 //!    (kind=err) propagated by the listener/lifecycle.
-//! 2. `handle_request` broker-side timeout — emits `Err{error_code: "timeout"}`.
+//! 2. `cancel_by_external_handle` — MCP `notifications/cancelled`
+//!    routed from the companion drains the pending entry; emits
+//!    `Err{error_code: "canceled"}`.
 //! 3. `handle_request` completion-channel-dropped — emits `Err{error_code: "canceled"}`.
 //! 4. `cancel_by_child_connection` — emits `Err{error_code: "canceled"}` for
 //!    every drained pending entry whose child matches.

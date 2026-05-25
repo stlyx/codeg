@@ -171,9 +171,11 @@ async fn async_main() {
         delegation_socket_path: delegation_socket_path.clone(),
     });
 
-    // Apply persisted delegation settings (depth, timeout, enabled) before
+    // Apply persisted delegation settings (depth, enabled) before
     // the listener starts accepting so even the first companion request
-    // sees the operator's configured behavior.
+    // sees the operator's configured behavior. Cancellation is handled
+    // out-of-band via MCP `notifications/cancelled` — no broker-side
+    // timeout to apply here.
     codeg_lib::commands::delegation::apply_persisted_config(&state.db.conn, &delegation_broker)
         .await;
 

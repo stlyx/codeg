@@ -1,13 +1,15 @@
 "use client"
 
 /**
- * Multi-agent delegation settings panel. Owns the three knobs persisted by
+ * Multi-agent delegation settings panel. Owns the two knobs persisted by
  * `set_delegation_settings_core` on the Rust side:
  *
  *   * `enabled` — feature kill switch
  *   * `depth_limit` — bounds chain depth (1..=8)
- *   * `default_timeout_seconds` — broker fallback when LLM omits it (0..=3600,
- *     where 0 disables the timeout)
+ *
+ * Cancellation is handled out-of-band via MCP `notifications/cancelled`
+ * forwarded from the parent agent CLI; there is no broker-side timeout to
+ * configure here.
  *
  * Mounted under `/settings/general` next to the terminal and rendering
  * sections, because delegation is a global feature — not per-agent — and
@@ -31,8 +33,6 @@ import {
 
 const DEPTH_MIN = 1
 const DEPTH_MAX = 8
-const TIMEOUT_MIN = 0
-const TIMEOUT_MAX = 3600
 
 function clamp(n: number, lo: number, hi: number): number {
   if (!Number.isFinite(n)) return lo
@@ -45,7 +45,6 @@ export function DelegationSettingsSection() {
   const [saving, setSaving] = useState(false)
   const [enabled, setEnabled] = useState(true)
   const [depth, setDepth] = useState<number>(2)
-  const [timeout, setTimeoutValue] = useState<number>(600)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -55,7 +54,6 @@ export function DelegationSettingsSection() {
         if (cancelled) return
         setEnabled(s.enabled)
         setDepth(s.depth_limit)
-        setTimeoutValue(s.default_timeout_seconds)
         setLoadError(null)
       })
       .catch((err: unknown) => {
@@ -75,7 +73,6 @@ export function DelegationSettingsSection() {
     const payload: DelegationSettings = {
       enabled,
       depth_limit: clamp(depth, DEPTH_MIN, DEPTH_MAX),
-      default_timeout_seconds: clamp(timeout, TIMEOUT_MIN, TIMEOUT_MAX),
     }
     setSaving(true)
     try {
@@ -84,7 +81,6 @@ export function DelegationSettingsSection() {
       // what was actually persisted.
       setEnabled(applied.enabled)
       setDepth(applied.depth_limit)
-      setTimeoutValue(applied.default_timeout_seconds)
       toast.success(t("saved"))
     } catch (err: unknown) {
       toast.error(t("saveFailed"), {
@@ -93,7 +89,7 @@ export function DelegationSettingsSection() {
     } finally {
       setSaving(false)
     }
-  }, [enabled, depth, timeout, t])
+  }, [enabled, depth, t])
 
   return (
     <section className="rounded-xl border bg-card p-4 space-y-4">
@@ -145,27 +141,6 @@ export function DelegationSettingsSection() {
             onChange={(e) => setDepth(Number(e.target.value))}
             disabled={loading || !enabled}
             className="w-24"
-          />
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <div className="space-y-1">
-            <label htmlFor="delegation-timeout" className="text-sm font-medium">
-              {t("timeoutSeconds")}
-            </label>
-            <p className="text-xs text-muted-foreground">
-              {t("timeoutHint", { min: TIMEOUT_MIN, max: TIMEOUT_MAX })}
-            </p>
-          </div>
-          <Input
-            id="delegation-timeout"
-            type="number"
-            min={TIMEOUT_MIN}
-            max={TIMEOUT_MAX}
-            value={timeout}
-            onChange={(e) => setTimeoutValue(Number(e.target.value))}
-            disabled={loading || !enabled}
-            className="w-32"
           />
         </div>
       </div>

@@ -85,7 +85,6 @@ async fn end_to_end_named_pipe_happy_path() {
         .set_config(DelegationConfig {
             enabled: true,
             depth_limit: 8,
-            default_timeout: Duration::from_secs(30),
         })
         .await;
 
@@ -139,6 +138,7 @@ async fn end_to_end_named_pipe_happy_path() {
         token: "tok".into(),
         parent_connection_id: "p1".into(),
         parent_tool_use_id: "pt-1".into(),
+        external_handle: None,
         input: json!({"agent_type": "codex", "task": "do x"}),
     };
     let resp = client_round_trip_with_retry(&pipe, &req)
@@ -173,7 +173,6 @@ async fn end_to_end_named_pipe_back_to_back_requests() {
         .set_config(DelegationConfig {
             enabled: true,
             depth_limit: 8,
-            default_timeout: Duration::from_secs(30),
         })
         .await;
 
@@ -230,6 +229,7 @@ async fn end_to_end_named_pipe_back_to_back_requests() {
             token: "tok".into(),
             parent_connection_id: "p1".into(),
             parent_tool_use_id: format!("pt-{i}"),
+            external_handle: None,
             input: json!({"agent_type": "codex", "task": "x"}),
         };
         let resp = client_round_trip_with_retry(&pipe, &req)

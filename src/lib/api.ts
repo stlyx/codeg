@@ -2425,7 +2425,6 @@ export async function deleteModelProvider(id: number): Promise<void> {
 export interface DelegationSettings {
   enabled: boolean
   depth_limit: number
-  default_timeout_seconds: number
 }
 
 export async function getDelegationSettings(): Promise<DelegationSettings> {

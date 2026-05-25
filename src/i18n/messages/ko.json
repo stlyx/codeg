@@ -481,8 +481,6 @@
       "enableHint": "끄면 delegate_to_agent 도구가 에이전트의 MCP 도구 목록에서 숨겨집니다.",
       "depthLimit": "최대 위임 깊이",
       "depthHint": "허용 범위: {min}–{max}. 위임 체인(루트 → 하위 → 손자 …)의 재귀 깊이를 제한합니다.",
-      "timeoutSeconds": "기본 제한 시간(초)",
-      "timeoutHint": "허용 범위: {min}–{max}. 0은 시간 제한을 비활성화하며, 하위 작업은 완료될 때까지 실행될 수 있습니다. 호출한 에이전트가 timeout_seconds를 지정하지 않았을 때 적용됩니다.",
       "save": "저장",
       "saving": "저장 중…",
       "saved": "위임 설정이 저장되었습니다",

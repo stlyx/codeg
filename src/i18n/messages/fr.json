@@ -481,8 +481,6 @@
       "enableHint": "Lorsque cette option est désactivée, l’outil delegate_to_agent est masqué du catalogue d’outils MCP de l’agent.",
       "depthLimit": "Profondeur maximale de délégation",
       "depthHint": "Plage autorisée : {min}–{max}. Limite la profondeur de récursion d’une chaîne de délégation (racine → enfant → petit-enfant …).",
-      "timeoutSeconds": "Délai d’expiration par défaut (secondes)",
-      "timeoutHint": "Plage autorisée : {min}–{max}. 0 désactive le délai d’expiration ; la tâche enfant peut s’exécuter jusqu’à sa fin. Utilisé lorsque l’agent appelant ne précise pas timeout_seconds.",
       "save": "Enregistrer",
       "saving": "Enregistrement…",
       "saved": "Paramètres de délégation enregistrés",

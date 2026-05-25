@@ -481,8 +481,6 @@
       "enableHint": "When off, the delegate_to_agent tool is hidden from the agent's MCP catalog.",
       "depthLimit": "Maximum delegation depth",
       "depthHint": "Allowed range: {min}–{max}. Caps how deep a chain (root → child → grandchild …) can recurse.",
-      "timeoutSeconds": "Default timeout (seconds)",
-      "timeoutHint": "Allowed range: {min}–{max}. 0 disables the timeout; the child can run until it finishes. Applied when the calling agent does not specify timeout_seconds.",
       "save": "Save",
       "saving": "Saving…",
       "saved": "Delegation settings saved",

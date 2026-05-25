@@ -53,7 +53,6 @@ async fn end_to_end_uds_happy_path() {
         .set_config(DelegationConfig {
             enabled: true,
             depth_limit: 8,
-            default_timeout: Duration::from_secs(30),
         })
         .await;
 
@@ -120,6 +119,7 @@ async fn end_to_end_uds_happy_path() {
         token: "tok".into(),
         parent_connection_id: "p1".into(),
         parent_tool_use_id: "pt-1".into(),
+        external_handle: None,
         input: json!({"agent_type": "codex", "task": "do x"}),
     };
     let resp = client_round_trip(&socket.to_string_lossy(), &req)
@@ -167,6 +167,7 @@ async fn end_to_end_uds_invalid_token_rejected() {
         token: "wrong-token".into(),
         parent_connection_id: "p1".into(),
         parent_tool_use_id: "pt-1".into(),
+        external_handle: None,
         input: json!({"agent_type": "codex", "task": "x"}),
     };
     let resp = client_round_trip(&socket.to_string_lossy(), &req)

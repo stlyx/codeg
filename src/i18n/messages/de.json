@@ -481,8 +481,6 @@
       "enableHint": "Wenn deaktiviert, wird das Tool delegate_to_agent im MCP-Toolkatalog des Agenten ausgeblendet.",
       "depthLimit": "Maximale Delegationstiefe",
       "depthHint": "Zulässiger Bereich: {min}–{max}. Begrenzt, wie tief eine Delegationskette (Root → Kind → Enkel …) rekursieren kann.",
-      "timeoutSeconds": "Standard-Timeout (Sekunden)",
-      "timeoutHint": "Zulässiger Bereich: {min}–{max}. 0 deaktiviert das Timeout; die untergeordnete Aufgabe kann laufen, bis sie fertig ist. Wird verwendet, wenn der aufrufende Agent timeout_seconds nicht angibt.",
       "save": "Speichern",
       "saving": "Wird gespeichert…",
       "saved": "Delegationseinstellungen gespeichert",

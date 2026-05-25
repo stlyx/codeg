@@ -13,6 +13,29 @@
 //! them into a single line. JSON-RPC over stdio uses newlines because
 //! Content-Length headers add complexity; for an internal UDS we can do
 //! better.
+//!
+//! ### Message shapes
+//!
+//! Inbound traffic is a tagged [`BrokerMessage`] enum (`kind: "call"` or
+//! `kind: "cancel"`). The `call` arm carries a [`BrokerRequest`] and
+//! receives a [`BrokerResponse`] on the same socket; the `cancel` arm is
+//! a fire-and-forget [`BrokerCancelRequest`] that targets a previously-
+//! issued call by `external_handle` and gets a `Value::Null` ack. Both
+//! arms are authenticated by the same per-launch `token`.
+//!
+//! ### Version coupling
+//!
+//! The companion (`codeg-mcp`) and the listener (inside the codeg main
+//! process) ship in the SAME release artifact — the Tauri bundle, the
+//! server Docker image, and the standalone binary tree all install both
+//! binaries at the same path. The MCP config pointing the agent CLI at
+//! `codeg-mcp` uses an absolute path that is replaced atomically by the
+//! upgrade, so an old-version companion talking to a new-version listener
+//! is not a supported configuration. As a consequence this protocol does
+//! NOT carry a version field and the tagged-enum cutover from the older
+//! plain-`BrokerRequest` frame is deliberately non-backward-compatible —
+//! a stale companion would fail to decode and surface as a JSON-RPC
+//! error to the LLM, which is preferable to silent misbehavior.
 
 use std::io;
 
@@ -35,14 +58,44 @@ pub struct BrokerRequest {
     /// Used to bind the eventual child outcome back to the parent's
     /// tool_use_id in the UI / DB.
     pub parent_tool_use_id: String,
+    /// Opaque companion-minted token (one per `tools/call`). The broker
+    /// keys its `cancel_by_external_handle` lookup off this value so an
+    /// MCP-side `notifications/cancelled` can target this specific call.
+    /// Older companions / tests can omit it; missing handles disable the
+    /// cancel path for that call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_handle: Option<String>,
     /// Raw `arguments` JSON from the MCP `tools/call` request, schema-shaped
     /// per [`super::tool_schema_json`]. The main process re-parses into
     /// [`super::types::DelegationRequest`].
     pub input: Value,
 }
 
+/// Cancel an in-flight delegation by its companion-minted
+/// `external_handle`. Sent fire-and-forget — the listener acknowledges by
+/// writing an empty [`BrokerResponse`] so the companion can detect a
+/// broken socket, but the response body carries no information.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerCancelRequest {
+    pub token: String,
+    pub external_handle: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Tagged top-level message dispatched by the listener. Adding new variants
+/// is the wire-stable way to grow the broker protocol without touching the
+/// frame layer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BrokerMessage {
+    Call(BrokerRequest),
+    Cancel(BrokerCancelRequest),
+}
+
 /// The wrapped outcome the main process returns over the same socket.
-/// `outcome` is a serialized [`super::types::DelegationOutcome`].
+/// `outcome` is a serialized [`super::types::DelegationOutcome`] for `Call`
+/// messages and `Value::Null` for `Cancel` acknowledgements.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrokerResponse {
     pub outcome: Value,
@@ -101,7 +154,8 @@ pub async fn client_round_trip(
 ) -> io::Result<BrokerResponse> {
     use tokio::net::UnixStream;
     let mut stream = UnixStream::connect(socket_path).await?;
-    write_frame(&mut stream, req).await?;
+    let msg = BrokerMessage::Call(req.clone());
+    write_frame(&mut stream, &msg).await?;
     read_frame(&mut stream).await
 }
 
@@ -111,12 +165,94 @@ pub async fn client_round_trip(
     socket_path: &str,
     req: &BrokerRequest,
 ) -> io::Result<BrokerResponse> {
-    use tokio::net::windows::named_pipe::ClientOptions;
-    let mut stream = ClientOptions::new()
-        .open(socket_path)
+    let mut stream = open_named_pipe_with_retry(socket_path)
+        .await
         .map_err(|e| io::Error::other(format!("open pipe: {e}")))?;
-    write_frame(&mut stream, req).await?;
+    let msg = BrokerMessage::Call(req.clone());
+    write_frame(&mut stream, &msg).await?;
     read_frame(&mut stream).await
+}
+
+/// Total budget for `open()` retries on Windows named pipes. Has to be
+/// short enough that it nests comfortably inside the companion's
+/// `BROKER_CANCEL_BUDGET` (500 ms) — leaving ≥ 300 ms for the actual
+/// write/read after the open lands.
+#[cfg(windows)]
+const PIPE_OPEN_RETRY_BUDGET: std::time::Duration = std::time::Duration::from_millis(200);
+
+#[cfg(windows)]
+const PIPE_OPEN_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// Windows-only: `ClientOptions::open()` can fail with
+/// `ERROR_PIPE_BUSY` (231) or `NotFound` during the brief window between
+/// the listener accepting one connection and binding the next instance
+/// (see `DelegationListener::run` on Windows). The companion has already
+/// removed the inflight entry by the time it dispatches a cancel, so
+/// dropping the cancel on a transient open failure would silently lose
+/// it. Retry with small backoff inside a tight budget. Non-busy errors
+/// (e.g. listener not running at all) propagate immediately.
+#[cfg(windows)]
+async fn open_named_pipe_with_retry(
+    socket_path: &str,
+) -> io::Result<tokio::net::windows::named_pipe::NamedPipeClient> {
+    use tokio::net::windows::named_pipe::ClientOptions;
+    let attempt = async {
+        loop {
+            match ClientOptions::new().open(socket_path) {
+                Ok(client) => return Ok::<_, io::Error>(client),
+                Err(e) => {
+                    let busy = e.raw_os_error() == Some(231);
+                    let not_found = e.kind() == io::ErrorKind::NotFound;
+                    if !(busy || not_found) {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(PIPE_OPEN_RETRY_DELAY).await;
+                }
+            }
+        }
+    };
+    match tokio::time::timeout(PIPE_OPEN_RETRY_BUDGET, attempt).await {
+        Ok(inner) => inner,
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "named pipe open: retry budget exhausted",
+        )),
+    }
+}
+
+/// Fire-and-forget cancel: open a fresh socket, write a
+/// `BrokerMessage::Cancel`, read the (always-empty) ack so the listener gets
+/// a chance to flush its side before we drop, then close. Errors are
+/// returned but generally treated as "best effort" by callers — a cancel
+/// race that loses to a completed response is fine, the companion will
+/// suppress the response per MCP spec either way.
+#[cfg(unix)]
+pub async fn client_cancel(
+    socket_path: &str,
+    req: &BrokerCancelRequest,
+) -> io::Result<()> {
+    use tokio::net::UnixStream;
+    let mut stream = UnixStream::connect(socket_path).await?;
+    let msg = BrokerMessage::Cancel(req.clone());
+    write_frame(&mut stream, &msg).await?;
+    // The listener writes an empty BrokerResponse so we can detect a broken
+    // pipe; we don't care what's inside.
+    let _: io::Result<BrokerResponse> = read_frame(&mut stream).await;
+    Ok(())
+}
+
+#[cfg(windows)]
+pub async fn client_cancel(
+    socket_path: &str,
+    req: &BrokerCancelRequest,
+) -> io::Result<()> {
+    let mut stream = open_named_pipe_with_retry(socket_path)
+        .await
+        .map_err(|e| io::Error::other(format!("open pipe: {e}")))?;
+    let msg = BrokerMessage::Cancel(req.clone());
+    write_frame(&mut stream, &msg).await?;
+    let _: io::Result<BrokerResponse> = read_frame(&mut stream).await;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -128,16 +264,43 @@ mod tests {
     #[tokio::test]
     async fn frame_round_trip_in_memory() {
         let (mut a, mut b) = duplex(8 * 1024);
-        let req = BrokerRequest {
+        let msg = BrokerMessage::Call(BrokerRequest {
             token: "tok".into(),
             parent_connection_id: "p1".into(),
             parent_tool_use_id: "pt1".into(),
+            external_handle: Some("h1".into()),
             input: json!({"agent_type": "codex", "task": "hi"}),
-        };
-        write_frame(&mut a, &req).await.unwrap();
-        let got: BrokerRequest = read_frame(&mut b).await.unwrap();
-        assert_eq!(got.token, "tok");
-        assert_eq!(got.input["agent_type"], "codex");
+        });
+        write_frame(&mut a, &msg).await.unwrap();
+        let got: BrokerMessage = read_frame(&mut b).await.unwrap();
+        match got {
+            BrokerMessage::Call(req) => {
+                assert_eq!(req.token, "tok");
+                assert_eq!(req.input["agent_type"], "codex");
+                assert_eq!(req.external_handle.as_deref(), Some("h1"));
+            }
+            BrokerMessage::Cancel(_) => panic!("expected Call variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_message_round_trip_in_memory() {
+        let (mut a, mut b) = duplex(8 * 1024);
+        let msg = BrokerMessage::Cancel(BrokerCancelRequest {
+            token: "tok".into(),
+            external_handle: "h1".into(),
+            reason: Some("user requested".into()),
+        });
+        write_frame(&mut a, &msg).await.unwrap();
+        let got: BrokerMessage = read_frame(&mut b).await.unwrap();
+        match got {
+            BrokerMessage::Cancel(req) => {
+                assert_eq!(req.token, "tok");
+                assert_eq!(req.external_handle, "h1");
+                assert_eq!(req.reason.as_deref(), Some("user requested"));
+            }
+            BrokerMessage::Call(_) => panic!("expected Cancel variant"),
+        }
     }
 
     #[tokio::test]
@@ -147,7 +310,7 @@ mod tests {
         let bad_len: u32 = (MAX_FRAME_BYTES as u32) + 1;
         a.write_all(&bad_len.to_le_bytes()).await.unwrap();
         a.flush().await.unwrap();
-        let result: io::Result<BrokerRequest> = read_frame(&mut b).await;
+        let result: io::Result<BrokerMessage> = read_frame(&mut b).await;
         let err = result.expect_err("expected oversized frame to be rejected");
         assert_eq!(err.kind(), io::ErrorKind::InvalidData);
     }
@@ -176,8 +339,11 @@ mod tests {
         let server_task = tokio::spawn(async move {
             let mut conn = server;
             conn.connect().await.unwrap();
-            let req: BrokerRequest = read_frame(&mut conn).await.unwrap();
-            assert_eq!(req.token, "tok");
+            let msg: BrokerMessage = read_frame(&mut conn).await.unwrap();
+            match msg {
+                BrokerMessage::Call(req) => assert_eq!(req.token, "tok"),
+                BrokerMessage::Cancel(_) => panic!("expected Call"),
+            }
             let resp = BrokerResponse {
                 outcome: json!({"kind": "ok", "text": "hello"}),
             };
@@ -190,6 +356,7 @@ mod tests {
             token: "tok".into(),
             parent_connection_id: "p1".into(),
             parent_tool_use_id: "pt1".into(),
+            external_handle: None,
             input: json!({"agent_type": "codex", "task": "do x"}),
         };
         let resp = client_round_trip(&pipe_name, &req).await.unwrap();
@@ -210,8 +377,11 @@ mod tests {
 
         let server = tokio::spawn(async move {
             let (mut conn, _) = listener.accept().await.unwrap();
-            let req: BrokerRequest = read_frame(&mut conn).await.unwrap();
-            assert_eq!(req.token, "tok");
+            let msg: BrokerMessage = read_frame(&mut conn).await.unwrap();
+            match msg {
+                BrokerMessage::Call(req) => assert_eq!(req.token, "tok"),
+                BrokerMessage::Cancel(_) => panic!("expected Call"),
+            }
             let resp = BrokerResponse {
                 outcome: json!({"kind": "ok", "text": "hello"}),
             };
@@ -222,6 +392,7 @@ mod tests {
             token: "tok".into(),
             parent_connection_id: "p1".into(),
             parent_tool_use_id: "pt1".into(),
+            external_handle: None,
             input: json!({"agent_type": "codex", "task": "do x"}),
         };
         let resp = client_round_trip(&server_path, &req).await.unwrap();

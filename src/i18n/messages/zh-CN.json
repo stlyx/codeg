@@ -481,8 +481,6 @@
       "enableHint": "关闭后，delegate_to_agent 工具会从智能体的 MCP 工具清单中隐藏。",
       "depthLimit": "最大委托深度",
       "depthHint": "允许范围：{min}–{max}。限制委托链（根 → 子 → 孙 …）的最大递归深度。",
-      "timeoutSeconds": "默认超时（秒）",
-      "timeoutHint": "允许范围：{min}–{max}。设为 0 表示不超时，子任务可一直运行直到完成；当调用方未指定 timeout_seconds 时使用。",
       "save": "保存",
       "saving": "保存中…",
       "saved": "委托设置已保存",

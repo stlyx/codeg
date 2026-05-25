@@ -20,6 +20,12 @@ use crate::models::AgentType;
 /// parent session (NOT the agent-assigned ACP session id). The broker uses it
 /// to inherit the parent's EventEmitter/working_dir and to scope
 /// `cancel_by_parent`.
+///
+/// `external_handle` is a companion-minted opaque token (per MCP `tools/call`)
+/// that the broker stores alongside the pending entry so an MCP-side
+/// `notifications/cancelled` can target this specific delegation without the
+/// companion having to know the broker-internal `call_id`. `None` for non-MCP
+/// callers and tests that don't exercise the cancel path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DelegationRequest {
     pub parent_connection_id: String,
@@ -28,7 +34,8 @@ pub struct DelegationRequest {
     pub agent_type: AgentType,
     pub task: String,
     pub working_dir: Option<String>,
-    pub timeout_seconds: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_handle: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,8 +86,6 @@ pub enum DelegationError {
     ChildEmpty,
     #[error("subagent ended with unrecognized stop reason: {0}")]
     ChildUnknown(String),
-    #[error("timeout after {elapsed_ms}ms")]
-    Timeout { elapsed_ms: u64 },
     #[error("canceled: {reason}")]
     Canceled { reason: String },
     #[error("parent session is gone")]
@@ -119,7 +124,6 @@ impl DelegationOutcome {
             DelegationError::ChildMaxTurnRequests => "child_max_turn_requests",
             DelegationError::ChildEmpty => "child_empty",
             DelegationError::ChildUnknown(_) => "child_unknown",
-            DelegationError::Timeout { .. } => "timeout",
             DelegationError::Canceled { .. } => "canceled",
             DelegationError::ParentSessionGone => "canceled",
         };

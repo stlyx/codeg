@@ -3114,8 +3114,11 @@ async fn run_conversation_loop<'a>(
                                     // cleanup-guard cancel_by_parent at the end of
                                     // run_connection (#1: empty pending → no-op).
                                     // Without this, a user-initiated cancel of a parent
-                                    // prompt mid-delegation leaves the child agent
-                                    // running indefinitely until broker timeout.
+                                    // prompt mid-delegation would leave the child agent
+                                    // running indefinitely (broker no longer applies a
+                                    // timeout; only an MCP `notifications/cancelled` or
+                                    // a parent/child disconnect would otherwise tear
+                                    // the delegation down).
                                     //
                                     // Fire-and-forget so the user-visible Cancel
                                     // path doesn't wait on (potentially slow)

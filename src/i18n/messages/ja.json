@@ -481,8 +481,6 @@
       "enableHint": "オフにすると、delegate_to_agent ツールはエージェントの MCP ツール一覧から非表示になります。",
       "depthLimit": "最大委任深度",
       "depthHint": "許可範囲: {min}–{max}。委任チェーン（ルート → 子 → 孫 …）の再帰深度を制限します。",
-      "timeoutSeconds": "デフォルトのタイムアウト（秒）",
-      "timeoutHint": "許可範囲: {min}–{max}。0 にするとタイムアウトを無効化し、子タスクは完了するまで実行できます。呼び出し元エージェントが timeout_seconds を指定しない場合に適用されます。",
       "save": "保存",
       "saving": "保存中…",
       "saved": "委任設定を保存しました",

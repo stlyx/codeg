@@ -24,13 +24,6 @@
       "working_dir": {
         "type": "string",
         "description": "Absolute directory where the sub-agent should run. Defaults to the parent session's current working directory."
-      },
-      "timeout_seconds": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 3600,
-        "default": 600,
-        "description": "Timeout in seconds for the sub-agent run. Defaults to 600 seconds; 0 disables the timeout."
       }
     }
   }

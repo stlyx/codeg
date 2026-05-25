@@ -12,10 +12,14 @@
 //!    [`DelegationLink`] carries the parent's `tool_use_id` and a
 //!    broker-internal `call_id` (UUID) — these get persisted onto the new
 //!    conversation row.
-//! 5. Park a `oneshot::Sender` keyed by `call_id`. The race is between:
+//! 5. Park a `oneshot::Sender` keyed by `call_id`. Resolution comes from
+//!    one of:
 //!       - the listener calling [`DelegationBroker::complete_call`] on
-//!         `TurnComplete`, and
-//!       - the broker's own `tokio::time::timeout`.
+//!         `TurnComplete` (happy path), or
+//!       - a cancel — either MCP-side
+//!         (`notifications/cancelled` → `cancel_by_external_handle`),
+//!         child-side ([`DelegationBroker::cancel_by_child_connection`]),
+//!         or parent-side ([`DelegationBroker::cancel_by_parent`]).
 //! 6. On any resolution, the child connection is disconnected. v1 is
 //!    explicitly one-shot — no session reuse.
 //!
@@ -24,9 +28,9 @@
 //! [`DelegationBroker::cancel_by_parent`] which fans out cancel + disconnect
 //! to every pending child of that parent.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::{oneshot, Mutex};
@@ -53,7 +57,6 @@ pub struct DelegationConfig {
     /// the chain root → child → grandchild is allowed; the grandchild trying
     /// to spawn a great-grandchild is rejected. See spec §5.
     pub depth_limit: u32,
-    pub default_timeout: Duration,
 }
 
 impl Default for DelegationConfig {
@@ -61,7 +64,6 @@ impl Default for DelegationConfig {
         Self {
             enabled: true,
             depth_limit: 2,
-            default_timeout: Duration::from_secs(600),
         }
     }
 }
@@ -72,6 +74,11 @@ struct PendingCall {
     parent_connection_id: String,
     #[allow(dead_code)] // surfaced via accessors and listener payloads in later phases
     parent_tool_use_id: String,
+    /// MCP-side opaque handle minted by the companion per `tools/call`. The
+    /// listener forwards it through `DelegationRequest`; we keep it here so
+    /// `cancel_by_external_handle` can find the entry. `None` for delegations
+    /// that didn't come through MCP (tests, future internal callers).
+    external_handle: Option<String>,
     tx: oneshot::Sender<DelegationOutcome>,
 }
 
@@ -79,6 +86,34 @@ struct PendingCall {
 struct PendingCalls {
     inner: Mutex<HashMap<String, PendingCall>>,
 }
+
+/// Set of MCP-side `external_handle` tokens for which the companion
+/// already received `notifications/cancelled` BEFORE the matching
+/// `handle_request` reached the pending-registration phase. Without
+/// this pre-cancel buffer, a fast cancel that lands during the
+/// pre-check / spawn window would find no entry in `pending`, drop
+/// silently, and let the broker proceed to spawn a child the caller
+/// no longer wants. `handle_request` consults this set both at entry
+/// (so we never even spawn) and immediately after parking the pending
+/// entry (so a cancel landing mid-spawn still wins).
+///
+/// Capped at [`PRE_CANCELED_CAP`] so a misbehaving MCP client (or a
+/// pathological cancel-for-unknown-id storm) can't grow the set
+/// without bound. Eviction is FIFO via the parallel `order` deque,
+/// which is fine because pre-cancels only matter for the short window
+/// between the cancel and the late-arriving `handle_request`.
+#[derive(Default)]
+struct PreCanceledHandles {
+    inner: Mutex<PreCanceledState>,
+}
+
+#[derive(Default)]
+struct PreCanceledState {
+    set: HashSet<String>,
+    order: VecDeque<String>,
+}
+
+const PRE_CANCELED_CAP: usize = 256;
 
 /// FIFO of `tool_call_id`s that the ACP lifecycle observed firing
 /// `delegate_to_agent` on a given parent connection but for which the
@@ -117,6 +152,7 @@ pub struct DelegationBroker {
     event_emitter: Arc<dyn DelegationEventEmitter>,
     pending: Arc<PendingCalls>,
     pending_tool_calls: Arc<PendingToolCalls>,
+    pre_canceled_handles: Arc<PreCanceledHandles>,
     config: Arc<Mutex<DelegationConfig>>,
 }
 
@@ -168,6 +204,7 @@ impl DelegationBroker {
             event_emitter,
             pending: Arc::new(PendingCalls::default()),
             pending_tool_calls: Arc::new(PendingToolCalls::default()),
+            pre_canceled_handles: Arc::new(PreCanceledHandles::default()),
             config: Arc::new(Mutex::new(DelegationConfig::default())),
         }
     }
@@ -240,6 +277,43 @@ impl DelegationBroker {
         None
     }
 
+    /// Remove `handle` from the pre-cancel set, returning whether it was
+    /// present. Used by `handle_request` at two checkpoints (entry + just
+    /// after pending registration) so a cancel that lost the race with the
+    /// MCP round-trip still wins. The set is single-shot per handle —
+    /// taking it here means a subsequent `cancel_by_external_handle` will
+    /// have to find the pending entry on its own.
+    async fn take_pre_canceled_handle(&self, handle: &str) -> bool {
+        let mut state = self.pre_canceled_handles.inner.lock().await;
+        if state.set.remove(handle) {
+            // Best-effort companion-side cleanup of `order` so a later
+            // FIFO eviction doesn't burn a slot. Linear scan is fine —
+            // PRE_CANCELED_CAP is small.
+            if let Some(pos) = state.order.iter().position(|h| h == handle) {
+                state.order.remove(pos);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Insert `handle` into the pre-cancel set with FIFO eviction at
+    /// [`PRE_CANCELED_CAP`]. Idempotent — re-inserting an existing handle
+    /// is a no-op.
+    async fn buffer_pre_canceled_handle(&self, handle: String) {
+        let mut state = self.pre_canceled_handles.inner.lock().await;
+        if !state.set.insert(handle.clone()) {
+            return;
+        }
+        state.order.push_back(handle);
+        while state.order.len() > PRE_CANCELED_CAP {
+            if let Some(evicted) = state.order.pop_front() {
+                state.set.remove(&evicted);
+            }
+        }
+    }
+
     /// Forget every pending tool_call id for the given parent. Called when
     /// the parent connection tears down so stale ids don't bind to a future
     /// reuse of the same connection_id (UUIDs make that unlikely but cheap
@@ -263,6 +337,22 @@ impl DelegationBroker {
     /// Entry point. Drives the full lifecycle and returns whatever the parent
     /// LLM should see as the `delegate_to_agent` tool_result.
     pub async fn handle_request(&self, mut req: DelegationRequest) -> DelegationOutcome {
+        // Pre-cancel short-circuit. If the MCP companion already received
+        // `notifications/cancelled` for this `tools/call` before we even
+        // started processing (cancel ran ahead of the UDS round-trip), we
+        // claim the handle from the pre-cancel set and bail without
+        // spawning anything — the caller will not be receiving our
+        // response either way (the companion suppresses it per MCP spec).
+        if let Some(handle) = req.external_handle.as_deref() {
+            if self.take_pre_canceled_handle(handle).await {
+                return DelegationOutcome::from_err(
+                    DelegationError::Canceled {
+                        reason: "canceled before spawn".into(),
+                    },
+                    None,
+                );
+            }
+        }
         // MCP clients usually don't populate `_meta.tool_use_id`, so the
         // listener will pass through an empty string. Best-effort claim the
         // most recent ACP-side `tool_call_id` for this parent — with a brief
@@ -314,12 +404,6 @@ impl DelegationBroker {
                 None,
             );
         }
-
-        let timeout = req
-            .timeout_seconds
-            .map(Duration::from_secs)
-            .unwrap_or(cfg.default_timeout);
-        let started_at = Instant::now();
 
         // --- Spawn child connection --------------------------------------------
         let child_connection_id = match self
@@ -380,7 +464,7 @@ impl DelegationBroker {
         )
         .await;
 
-        // --- Register pending + race timeout vs completion --------------------
+        // --- Register pending + await completion or cancel --------------------
         let (tx, rx) = oneshot::channel();
         {
             let mut map = self.pending.inner.lock().await;
@@ -391,46 +475,71 @@ impl DelegationBroker {
                     child_conversation_id,
                     parent_connection_id: req.parent_connection_id.clone(),
                     parent_tool_use_id: req.parent_tool_use_id.clone(),
+                    external_handle: req.external_handle.clone(),
                     tx,
                 },
             );
         }
 
-        enum WaitResult {
-            Completed(DelegationOutcome),
-            CompletionDropped,
-            TimedOut,
+        // Second pre-cancel check: a `notifications/cancelled` may have
+        // landed between the entry-side check and the pending registration
+        // above. If so, drain the entry ourselves (so cancel_by_external_handle
+        // racing us doesn't double-emit) and surface the canceled outcome.
+        if let Some(handle) = req.external_handle.as_deref() {
+            if self.take_pre_canceled_handle(handle).await {
+                let entry = self.pending.inner.lock().await.remove(&call_id);
+                if let Some(PendingCall { tx, .. }) = entry {
+                    self.write_meta_if_real(
+                        &req.parent_connection_id,
+                        &req.parent_tool_use_id,
+                        build_delegation_meta(
+                            "failed",
+                            Some(&child_connection_id),
+                            Some(child_conversation_id),
+                            Some("canceled"),
+                        ),
+                    )
+                    .await;
+                    self.emit_completed_if_real(
+                        &req.parent_connection_id,
+                        &req.parent_tool_use_id,
+                        &child_connection_id,
+                        child_conversation_id,
+                        DelegationResultSummary::Err {
+                            error_code: "canceled".to_string(),
+                        },
+                    )
+                    .await;
+                    let _ = self.spawner.cancel(&child_connection_id).await;
+                    let _ = self.spawner.disconnect(&child_connection_id).await;
+                    let outcome = DelegationOutcome::from_err(
+                        DelegationError::Canceled {
+                            reason: "canceled before await".into(),
+                        },
+                        Some(child_conversation_id),
+                    );
+                    let _ = tx.send(outcome.clone());
+                    return outcome;
+                }
+            }
         }
 
-        let wait_result = if timeout.is_zero() {
-            match rx.await {
-                Ok(outcome) => WaitResult::Completed(outcome),
-                Err(_) => WaitResult::CompletionDropped,
-            }
-        } else {
-            match tokio::time::timeout(timeout, rx).await {
-                Ok(Ok(outcome)) => WaitResult::Completed(outcome),
-                Ok(Err(_)) => WaitResult::CompletionDropped,
-                Err(_) => WaitResult::TimedOut,
-            }
-        };
-
-        match wait_result {
-            WaitResult::Completed(outcome) => {
-                // complete_call already removed from `pending`, wrote meta,
-                // emitted DelegationCompleted, and disconnected; this is a
-                // belt-and-braces idempotent prune in case complete_call
-                // wasn't reached on this path (it always is in production,
+        match rx.await {
+            Ok(outcome) => {
+                // complete_call (or cancel_*) already removed from `pending`,
+                // wrote meta, emitted DelegationCompleted, and disconnected;
+                // this is a belt-and-braces idempotent prune in case the
+                // resolver path didn't drain it (it always does in production,
                 // but the prune is cheap).
                 self.pending.inner.lock().await.remove(&call_id);
                 outcome
             }
-            WaitResult::CompletionDropped => {
+            Err(_) => {
                 // The sender was dropped before sending — should not happen in
-                // practice (complete_call always sends before drop), but be defensive.
-                // Drain pending FIRST so a racing complete_call (from a late
-                // lifecycle TurnComplete) finds no entry and silently no-ops
-                // instead of double-emitting DelegationCompleted.
+                // practice (complete_call / cancel_* always send before drop),
+                // but be defensive. Drain pending FIRST so a racing resolver
+                // (from a late lifecycle TurnComplete) finds no entry and
+                // silently no-ops instead of double-emitting DelegationCompleted.
                 let _ = self.pending.inner.lock().await.remove(&call_id);
                 self.write_meta_if_real(
                     &req.parent_connection_id,
@@ -461,43 +570,6 @@ impl DelegationBroker {
                     Some(child_conversation_id),
                 )
             }
-            WaitResult::TimedOut => {
-                // Timeout. Drain pending FIRST so the subsequent
-                // spawner.disconnect (which fires the child's
-                // StatusChanged{Disconnected} → forward_disconnect_to_broker →
-                // cancel_by_child_connection cascade) finds an empty entry
-                // and doesn't race us into a double DelegationCompleted emit.
-                let _ = self.pending.inner.lock().await.remove(&call_id);
-                self.write_meta_if_real(
-                    &req.parent_connection_id,
-                    &req.parent_tool_use_id,
-                    build_delegation_meta(
-                        "failed",
-                        Some(&child_connection_id),
-                        Some(child_conversation_id),
-                        Some("timeout"),
-                    ),
-                )
-                .await;
-                self.emit_completed_if_real(
-                    &req.parent_connection_id,
-                    &req.parent_tool_use_id,
-                    &child_connection_id,
-                    child_conversation_id,
-                    DelegationResultSummary::Err {
-                        error_code: "timeout".to_string(),
-                    },
-                )
-                .await;
-                let _ = self.spawner.cancel(&child_connection_id).await;
-                let _ = self.spawner.disconnect(&child_connection_id).await;
-                DelegationOutcome::from_err(
-                    DelegationError::Timeout {
-                        elapsed_ms: started_at.elapsed().as_millis() as u64,
-                    },
-                    Some(child_conversation_id),
-                )
-            }
         }
     }
 
@@ -511,6 +583,7 @@ impl DelegationBroker {
             child_conversation_id,
             parent_connection_id,
             parent_tool_use_id,
+            external_handle: _,
             tx,
         }) = entry
         {
@@ -607,6 +680,75 @@ impl DelegationBroker {
                 result,
             )
             .await;
+    }
+
+    /// Cancel the pending delegation whose `external_handle` matches.
+    /// Called by the MCP listener on receipt of `notifications/cancelled`
+    /// from a companion. When no matching pending entry exists (the
+    /// cancel arrived before `handle_request` reached the
+    /// pending-registration phase) the handle is stashed in
+    /// `pre_canceled_handles` so the in-flight request can drain itself
+    /// when it tries to register or shortly after.
+    pub async fn cancel_by_external_handle(&self, external_handle: &str, reason: String) {
+        let drained: Vec<(String, PendingCall)> = {
+            let mut map = self.pending.inner.lock().await;
+            let keys: Vec<String> = map
+                .iter()
+                .filter(|(_, v)| {
+                    v.external_handle
+                        .as_deref()
+                        .map(|h| h == external_handle)
+                        .unwrap_or(false)
+                })
+                .map(|(k, _)| k.clone())
+                .collect();
+            keys.into_iter()
+                .map(|k| {
+                    let entry = map.remove(&k).expect("key just observed");
+                    (k, entry)
+                })
+                .collect()
+        };
+        if drained.is_empty() {
+            // Race: the cancel beat the handle's pending registration.
+            // Buffer it (capped, FIFO-evicted) so `handle_request` can
+            // drain itself on the next checkpoint instead of merrily
+            // proceeding to spawn the child.
+            self.buffer_pre_canceled_handle(external_handle.to_string())
+                .await;
+            return;
+        }
+        for (_call_id, entry) in drained {
+            self.write_meta_if_real(
+                &entry.parent_connection_id,
+                &entry.parent_tool_use_id,
+                build_delegation_meta(
+                    "failed",
+                    Some(&entry.child_connection_id),
+                    Some(entry.child_conversation_id),
+                    Some("canceled"),
+                ),
+            )
+            .await;
+            self.emit_completed_if_real(
+                &entry.parent_connection_id,
+                &entry.parent_tool_use_id,
+                &entry.child_connection_id,
+                entry.child_conversation_id,
+                DelegationResultSummary::Err {
+                    error_code: "canceled".to_string(),
+                },
+            )
+            .await;
+            let _ = self.spawner.cancel(&entry.child_connection_id).await;
+            let _ = self.spawner.disconnect(&entry.child_connection_id).await;
+            let _ = entry.tx.send(DelegationOutcome::from_err(
+                DelegationError::Canceled {
+                    reason: reason.clone(),
+                },
+                Some(entry.child_conversation_id),
+            ));
+        }
     }
 
     /// Resolve the pending delegation whose child matches
@@ -775,8 +917,18 @@ mod tests {
             agent_type: AgentType::ClaudeCode,
             task: "do x".into(),
             working_dir: None,
-            timeout_seconds: Some(30),
+            external_handle: None,
         }
+    }
+
+    fn request_with_handle(
+        parent_conv: i32,
+        tool_use: &str,
+        handle: &str,
+    ) -> DelegationRequest {
+        let mut r = request(parent_conv, tool_use);
+        r.external_handle = Some(handle.to_string());
+        r
     }
 
     // -- Task 4.3 -----------------------------------------------------------
@@ -791,13 +943,11 @@ mod tests {
             .set_config(DelegationConfig {
                 enabled: false,
                 depth_limit: 5,
-                default_timeout: Duration::from_secs(120),
             })
             .await;
         let got = broker.config_snapshot().await;
         assert!(!got.enabled);
         assert_eq!(got.depth_limit, 5);
-        assert_eq!(got.default_timeout, Duration::from_secs(120));
     }
 
     #[tokio::test]
@@ -809,7 +959,6 @@ mod tests {
             .set_config(DelegationConfig {
                 enabled: false,
                 depth_limit: 2,
-                default_timeout: Duration::from_secs(60),
             })
             .await;
         let outcome = broker.handle_request(request(1, "pt-1")).await;
@@ -903,47 +1052,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timeout_cancels_and_disconnects() {
+    async fn handle_request_waits_indefinitely_for_completion() {
+        // No timeout race anymore: handle_request blocks on `rx.await` until
+        // complete_call / cancel_* fires. This test asserts the pending entry
+        // sticks around even after a generous idle window.
         let mock = Arc::new(MockSpawner::new());
         mock.queue_spawn(Ok("c1".into())).await;
         mock.queue_send(Ok(99)).await;
         let broker =
             DelegationBroker::new(mock.clone() as Arc<dyn ConnectionSpawner>, shallow_lookup());
-        let mut req = request(1, "pt-1");
-        req.timeout_seconds = Some(1);
-        let outcome = broker.handle_request(req).await;
-        match outcome {
-            DelegationOutcome::Err {
-                code,
-                child_conversation_id,
-                ..
-            } => {
-                assert_eq!(code, "timeout");
-                assert_eq!(child_conversation_id, Some(99));
-            }
-            other => panic!("expected Timeout, got {other:?}"),
-        }
-        assert_eq!(mock.cancels.lock().await.as_slice(), &["c1"]);
-        assert_eq!(mock.disconnects.lock().await.as_slice(), &["c1"]);
-        assert_eq!(broker.pending_count().await, 0);
-    }
-
-    #[tokio::test]
-    async fn zero_timeout_waits_until_completion() {
-        let mock = Arc::new(MockSpawner::new());
-        mock.queue_spawn(Ok("c1".into())).await;
-        mock.queue_send(Ok(99)).await;
-        let broker =
-            DelegationBroker::new(mock.clone() as Arc<dyn ConnectionSpawner>, shallow_lookup());
-        let mut req = request(1, "pt-1");
-        req.timeout_seconds = Some(0);
 
         let driver = {
             let broker = broker.clone();
-            tokio::spawn(async move { broker.handle_request(req).await })
+            tokio::spawn(async move { broker.handle_request(request(1, "pt-1")).await })
         };
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(80)).await;
         assert_eq!(broker.pending_count().await, 1);
         assert!(mock.cancels.lock().await.is_empty());
 
@@ -1062,7 +1186,6 @@ mod tests {
             .set_config(DelegationConfig {
                 enabled: true,
                 depth_limit: 2,
-                default_timeout: Duration::from_secs(60),
             })
             .await;
         let outcome = broker.handle_request(request(3, "pt-1")).await;
@@ -1255,7 +1378,6 @@ mod tests {
             .set_config(DelegationConfig {
                 enabled: true,
                 depth_limit: 2,
-                default_timeout: Duration::from_secs(60),
             })
             .await;
 
@@ -1397,7 +1519,7 @@ mod tests {
             .complete_call(
                 &call_id,
                 DelegationOutcome::from_err(
-                    DelegationError::Timeout { elapsed_ms: 5_000 },
+                    DelegationError::SubagentRuntimeError("agent died".into()),
                     Some(7),
                 ),
             )
@@ -1415,7 +1537,7 @@ mod tests {
         assert_eq!(inner.get("status").unwrap().as_str().unwrap(), "failed");
         assert_eq!(
             inner.get("error_code").unwrap().as_str().unwrap(),
-            "timeout"
+            "subagent_error"
         );
     }
 
@@ -1503,8 +1625,8 @@ mod tests {
     // Issue: `.docs/issues/2026-05-24-delegation-termination-cascade.md`.
     // The broker must emit `AcpEvent::DelegationCompleted` once per drained
     // pending entry, regardless of which terminal path drained it (happy
-    // `complete_call`, broker-side timeout, child-disconnect cleanup, or
-    // parent-cancel cascade). Without these emits the frontend's live
+    // `complete_call`, MCP `cancel_by_external_handle`, child-disconnect
+    // cleanup, or parent-cancel cascade). Without these emits the frontend's live
     // delegation binding stays at "running" forever — see the issue doc
     // for the full path matrix.
 
@@ -1613,34 +1735,84 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn emitter_records_timeout_on_broker_side_timeout() {
+    async fn emitter_records_canceled_on_cancel_by_external_handle() {
+        // MCP-driven cancel path: companion received notifications/cancelled
+        // and the listener forwarded it to broker.cancel_by_external_handle.
+        // The broker must drain the pending entry, cancel + disconnect the
+        // child, and emit DelegationCompleted with error_code = "canceled".
         let mock = Arc::new(MockSpawner::new());
-        mock.queue_spawn(Ok("child-conn-to".into())).await;
+        mock.queue_spawn(Ok("child-conn-h".into())).await;
         mock.queue_send(Ok(91)).await;
         let writer = Arc::new(MockMetaWriter::new());
         let emitter = Arc::new(MockEventEmitter::new());
         let broker = broker_with_emitter(mock.clone(), writer.clone(), emitter.clone());
 
-        let mut req = request(1, "pt-timeout");
-        req.timeout_seconds = Some(1);
-        let outcome = broker.handle_request(req).await;
+        let driver = {
+            let broker = broker.clone();
+            tokio::spawn(async move {
+                broker
+                    .handle_request(request_with_handle(1, "pt-mcp-cancel", "h-1"))
+                    .await
+            })
+        };
+        while broker.pending_count().await == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        broker
+            .cancel_by_external_handle("h-1", "user requested".into())
+            .await;
+        let outcome = driver.await.unwrap();
         assert!(matches!(
             outcome,
-            DelegationOutcome::Err { ref code, .. } if code == "timeout"
+            DelegationOutcome::Err { ref code, .. } if code == "canceled"
         ));
 
+        assert_eq!(mock.cancels.lock().await.as_slice(), &["child-conn-h"]);
         let calls = emitter.snapshot().await;
         assert_eq!(calls.len(), 1, "expected exactly one emit, got {calls:?}");
         let call = &calls[0];
-        assert_eq!(call.parent_tool_use_id, "pt-timeout");
-        assert_eq!(call.child_connection_id, "child-conn-to");
+        assert_eq!(call.parent_tool_use_id, "pt-mcp-cancel");
+        assert_eq!(call.child_connection_id, "child-conn-h");
         assert_eq!(call.child_conversation_id, 91);
         match &call.result {
             DelegationResultSummary::Err { error_code } => {
-                assert_eq!(error_code, "timeout")
+                assert_eq!(error_code, "canceled")
             }
-            other => panic!("expected Err{{timeout}}, got {other:?}"),
+            other => panic!("expected Err{{canceled}}, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn cancel_by_external_handle_no_match_buffers_pre_cancel() {
+        // Cancel arrives before handle_request reaches pending registration.
+        // The broker must buffer the handle in pre_canceled_handles so the
+        // in-flight call drains itself on its post-registration checkpoint.
+        let mock = Arc::new(MockSpawner::new());
+        mock.queue_spawn(Ok("child-conn-pre".into())).await;
+        mock.queue_send(Ok(13)).await;
+        let writer = Arc::new(MockMetaWriter::new());
+        let emitter = Arc::new(MockEventEmitter::new());
+        let broker = broker_with_emitter(mock.clone(), writer.clone(), emitter.clone());
+
+        // Pre-cancel before spawning the driver — handle is unknown to the
+        // broker right now, but a buffered entry should make the next
+        // handle_request with the same handle bail out canceled.
+        broker
+            .cancel_by_external_handle("h-pre", "early cancel".into())
+            .await;
+        // Pre-cancel set is single-shot: a second call with the same handle
+        // and no pending entry just buffers it again (idempotent in practice).
+        let outcome = broker
+            .handle_request(request_with_handle(1, "pt-pre", "h-pre"))
+            .await;
+        match outcome {
+            DelegationOutcome::Err { code, .. } => assert_eq!(code, "canceled"),
+            other => panic!("expected canceled, got {other:?}"),
+        }
+        // Since the cancel won pre-spawn, no child connection should have
+        // been opened.
+        assert!(mock.cancels.lock().await.is_empty());
+        assert!(mock.disconnects.lock().await.is_empty());
     }
 
     #[tokio::test]

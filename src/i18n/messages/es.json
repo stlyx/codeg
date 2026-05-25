@@ -481,8 +481,6 @@
       "enableHint": "Cuando está desactivado, la herramienta delegate_to_agent se oculta del catálogo de herramientas MCP del agente.",
       "depthLimit": "Profundidad máxima de delegación",
       "depthHint": "Rango permitido: {min}–{max}. Limita la profundidad de recursión de una cadena de delegación (raíz → hijo → nieto …).",
-      "timeoutSeconds": "Tiempo de espera predeterminado (segundos)",
-      "timeoutHint": "Rango permitido: {min}–{max}. 0 desactiva el tiempo de espera; la tarea hija puede ejecutarse hasta finalizar. Se aplica cuando el agente llamador no especifica timeout_seconds.",
       "save": "Guardar",
       "saving": "Guardando…",
       "saved": "Configuración de delegación guardada",

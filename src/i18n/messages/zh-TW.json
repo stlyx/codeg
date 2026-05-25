@@ -481,8 +481,6 @@
       "enableHint": "關閉後，delegate_to_agent 工具會從智慧體的 MCP 工具清單中隱藏。",
       "depthLimit": "最大委派深度",
       "depthHint": "允許範圍：{min}–{max}。限制委派鏈（根 → 子 → 孫 …）的最大遞迴深度。",
-      "timeoutSeconds": "預設逾時（秒）",
-      "timeoutHint": "允許範圍：{min}–{max}。設為 0 表示不逾時，子任務可一直執行直到完成；當呼叫方未指定 timeout_seconds 時使用。",
       "save": "儲存",
       "saving": "儲存中…",
       "saved": "委派設定已儲存",
