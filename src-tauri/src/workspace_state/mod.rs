@@ -654,6 +654,7 @@ fn parse_numstat_value(raw: &str) -> i32 {
 async fn git_numstat_map(path: &str) -> HashMap<String, (i32, i32)> {
     async fn run_numstat(path: &str, args: &[&str]) -> Option<HashMap<String, (i32, i32)>> {
         let output = crate::process::tokio_command("git")
+            .arg("--no-optional-locks")
             .args(args)
             .current_dir(path)
             .output()
@@ -706,7 +707,7 @@ async fn collect_git_snapshot(path: &str) -> Result<Vec<WorkspaceGitEntry>, AppC
     // status + numstat don't depend on each other; run concurrently to cut
     // per-flush latency roughly in half on large repos.
     let (status_entries, stats) = tokio::join!(
-        folders::git_status(path.to_string(), Some(true)),
+        folders::git_status_no_optional_locks(path.to_string(), Some(true)),
         git_numstat_map(path),
     );
     let status_entries = status_entries?;

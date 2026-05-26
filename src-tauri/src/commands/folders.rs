@@ -1568,6 +1568,21 @@ pub async fn git_status(
     path: String,
     show_all_untracked: Option<bool>,
 ) -> Result<Vec<GitStatusEntry>, AppCommandError> {
+    git_status_with_options(path, show_all_untracked, false).await
+}
+
+pub(crate) async fn git_status_no_optional_locks(
+    path: String,
+    show_all_untracked: Option<bool>,
+) -> Result<Vec<GitStatusEntry>, AppCommandError> {
+    git_status_with_options(path, show_all_untracked, true).await
+}
+
+async fn git_status_with_options(
+    path: String,
+    show_all_untracked: Option<bool>,
+    no_optional_locks: bool,
+) -> Result<Vec<GitStatusEntry>, AppCommandError> {
     ensure_git_repo(&path)?;
 
     let untracked_mode = if show_all_untracked.unwrap_or(false) {
@@ -1575,7 +1590,11 @@ pub async fn git_status(
     } else {
         "-unormal"
     };
-    let output = crate::process::tokio_command("git")
+    let mut command = crate::process::tokio_command("git");
+    if no_optional_locks {
+        command.arg("--no-optional-locks");
+    }
+    let output = command
         .args(["-c", "core.quotePath=false"])
         .args(["status", "--porcelain=v1", untracked_mode])
         .current_dir(&path)
