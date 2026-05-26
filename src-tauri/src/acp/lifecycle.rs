@@ -411,8 +411,32 @@ async fn handle_terminal_event(
 /// above; this separately wakes the parent's pending `delegate_to_agent`
 /// tool_use_id. Match-by-`child_connection_id` is O(pending), bounded by
 /// active delegations.
-async fn forward_disconnect_to_broker(broker: &DelegationBroker, connection_id: &str) {
-    broker.cancel_by_child_connection(connection_id).await;
+///
+/// `terminal_error` is the formatted `AcpEvent::Error` detail (when the
+/// caller arrived via `Error` rather than a bare `Disconnected`). It gets
+/// stitched into the broker's canceled reason so the parent's
+/// `delegate_to_agent` tool-call result surfaces the real failure cause.
+async fn forward_disconnect_to_broker(
+    broker: &DelegationBroker,
+    connection_id: &str,
+    terminal_error: Option<&str>,
+) {
+    broker
+        .cancel_by_child_connection(connection_id, terminal_error)
+        .await;
+}
+
+/// Build a single-line detail string from an `AcpEvent::Error` payload,
+/// preferring the form `"[code] message"` when a stable code is present
+/// (so the parent agent sees both the machine-readable bucket and the
+/// human-readable text). Trims trailing whitespace; returns `message`
+/// verbatim when no code is provided.
+fn format_terminal_error(message: &str, code: Option<&str>) -> String {
+    let trimmed = message.trim();
+    match code {
+        Some(c) if !c.trim().is_empty() => format!("[{c}] {trimmed}"),
+        _ => trimmed.to_string(),
+    }
 }
 
 /// True when the ACP `tool_call` smells like an invocation of the
@@ -505,6 +529,16 @@ async fn connection_worker_loop(
     // 1-entry HashMap so we can reuse `handle_terminal_event` (also keeps the
     // existing test surface intact — tests still drive a `&mut HashMap`).
     let mut cache: HashMap<String, CachedConn> = HashMap::new();
+    // Buffer the latest `AcpEvent::Error` payload for this connection. The
+    // broker drain MUST be deferred to `Disconnected` because `Error` also
+    // fires from the in-turn `turn_failure_error_event` path (refusal /
+    // max_tokens / empty / unknown) before the trailing `TurnComplete` —
+    // draining on Error there would race-cancel a pending delegation that
+    // the upcoming `complete_call` would have mapped to a proper child-side
+    // error code (`ChildRefusal` / `ChildMaxTokens` / …). On the genuinely
+    // terminal path (`connection.rs:488`), `Error` is followed immediately
+    // by `Disconnected`, so the buffered detail still reaches the broker.
+    let mut last_error: Option<String> = None;
     while let Some(envelope_arc) = rx.recv().await {
         let envelope: &EventEnvelope = envelope_arc.as_ref();
         match &envelope.payload {
@@ -515,17 +549,50 @@ async fn connection_worker_loop(
             }
             AcpEvent::StatusChanged {
                 status: ConnectionStatus::Disconnected,
-            }
-            | AcpEvent::Error { .. } => {
+            } => {
                 if let Err(e) = handle_terminal_event(&db, &mut cache, &connection_id).await {
                     eprintln!("[lifecycle][ERROR] terminal event for {connection_id}: {e}");
                 }
-                // If this connection owned a delegation child, surface a
-                // terminal outcome to the broker so the parent's pending
-                // tool_use_id doesn't dangle.
                 if let Some(b) = broker.as_ref() {
-                    forward_disconnect_to_broker(b.as_ref(), &connection_id).await;
+                    forward_disconnect_to_broker(
+                        b.as_ref(),
+                        &connection_id,
+                        last_error.as_deref(),
+                    )
+                    .await;
                 }
+            }
+            AcpEvent::Error {
+                message,
+                code,
+                terminal,
+                ..
+            } => {
+                // Only TRULY terminal Errors (the `run_connection` failure
+                // path at `connection.rs:493`) get to flip the conversation
+                // row and buffer the detail for the upcoming Disconnected.
+                //
+                // Non-terminal Errors (`turn_failure_error_event`,
+                // `session/load` fallback, empty-prompt rejection, SetMode
+                // / SetConfigOption failures) leave the connection alive:
+                // - flipping the row InProgress → Cancelled would briefly
+                //   show "Cancelled" in the UI before the next TurnComplete
+                //   corrects it (cosmetic but jumpy).
+                // - buffering a stale detail risks stitching it into the
+                //   broker's cancel reason on an unrelated future
+                //   Disconnected.
+                //
+                // F2 in the v0.14.3 sub-agent delegation post-mortem.
+                if !*terminal {
+                    continue;
+                }
+                if let Err(e) = handle_terminal_event(&db, &mut cache, &connection_id).await {
+                    eprintln!("[lifecycle][ERROR] terminal event for {connection_id}: {e}");
+                }
+                // Only buffer the detail for the eventual `Disconnected`.
+                // Do NOT call `forward_disconnect_to_broker` here — see the
+                // `last_error` comment above for the turn-failure race.
+                last_error = Some(format_terminal_error(message, code.as_deref()));
             }
             _ => {
                 handle_event_with_retry(&db, &manager, envelope, broker.as_ref()).await;
@@ -578,11 +645,19 @@ pub fn lifecycle_subscriber_task(
                     }
 
                     let conn_id = envelope_arc.connection_id.clone();
+                    // Only `Disconnected` tears the worker down. `Error` is
+                    // NOT terminal at the dispatcher level: it also fires
+                    // mid-turn from `turn_failure_error_event` while the
+                    // child connection stays alive, and the worker must
+                    // survive to buffer the detail and process the trailing
+                    // `TurnComplete`. On a genuinely terminal failure,
+                    // `connection.rs` emits `Disconnected` right after
+                    // `Error`, so the worker still exits promptly.
                     let is_terminal = matches!(
                         &envelope_arc.payload,
                         AcpEvent::StatusChanged {
                             status: ConnectionStatus::Disconnected
-                        } | AcpEvent::Error { .. }
+                        }
                     );
 
                     let tx = workers.entry(conn_id.clone()).or_insert_with(|| {
@@ -1058,6 +1133,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn format_terminal_error_with_code_prefixes_bracketed_label() {
+        // The lifecycle worker stitches `[code] message` together so the
+        // parent agent's tool-call result reads with both a stable
+        // machine-readable bucket and the human-readable detail.
+        assert_eq!(
+            format_terminal_error("Authentication required", Some("auth_required")),
+            "[auth_required] Authentication required"
+        );
+    }
+
+    #[test]
+    fn format_terminal_error_without_code_returns_trimmed_message() {
+        assert_eq!(
+            format_terminal_error("  transport closed\n", None),
+            "transport closed"
+        );
+    }
+
+    #[test]
+    fn format_terminal_error_treats_blank_code_as_absent() {
+        // Defensive: a whitespace-only code shouldn't produce a stray `[]` prefix.
+        assert_eq!(
+            format_terminal_error("agent crashed", Some("   ")),
+            "agent crashed"
+        );
+    }
+
     #[tokio::test]
     async fn handle_terminal_event_drains_cache_on_error_then_disconnected() {
         // connection.rs emits `Error` → `Disconnected` on failure. The first
@@ -1204,6 +1307,7 @@ mod tests {
             message: "boom".into(),
             agent_type: "claude_code".into(),
             code: None,
+            terminal: true,
         }));
 
         // Rejected (worker no-ops on these — must not enter the queue):
@@ -1469,5 +1573,363 @@ mod tests {
             "TurnComplete at the tail of a 200-event burst MUST be delivered \
              (regression test for `try_send` drop bug)"
         );
+    }
+
+    // ── Broker-cancel routing regression ─────────────────────────────────
+    //
+    // The lifecycle worker MUST defer `broker.cancel_by_child_connection`
+    // to `StatusChanged{Disconnected}`. `AcpEvent::Error` also fires
+    // mid-turn from `turn_failure_error_event` (refusal / max_tokens /
+    // empty / unknown) immediately before `TurnComplete`, while the child
+    // connection stays alive. Cancelling at Error there would race-drain
+    // the pending broker entry before `complete_call` could map the real
+    // stop reason — surfacing "canceled" to the parent agent instead of
+    // `ChildRefusal` / `ChildMaxTokens` / …. (See F1 in the v0.14.3
+    // sub-agent delegation post-mortem.)
+    //
+    // These tests drive `lifecycle_subscriber_task` end-to-end with a real
+    // `DelegationBroker` + `MockSpawner` so the dispatcher → worker →
+    // broker chain is exercised the same way it runs in production.
+
+    use crate::acp::delegation::broker::{ConversationDepthLookup, DelegationBroker};
+    use crate::acp::delegation::spawner::{mock::MockSpawner, ConnectionSpawner};
+    use crate::acp::delegation::types::{DelegationError, DelegationOutcome, DelegationRequest};
+    use async_trait::async_trait;
+
+    struct NoopDepthLookup;
+
+    #[async_trait]
+    impl ConversationDepthLookup for NoopDepthLookup {
+        async fn parent_of(&self, _id: i32) -> Result<Option<i32>, DelegationError> {
+            Ok(None)
+        }
+    }
+
+    fn delegation_request(child_conn_id: &str) -> DelegationRequest {
+        DelegationRequest {
+            parent_connection_id: format!("parent-of-{child_conn_id}"),
+            parent_conversation_id: 1,
+            parent_tool_use_id: format!("tu-{child_conn_id}"),
+            agent_type: AgentType::ClaudeCode,
+            task: "do x".into(),
+            working_dir: None,
+            external_handle: None,
+        }
+    }
+
+    /// Stage a broker with one pending entry whose `child_connection_id`
+    /// matches the test connection. The returned join handle resolves
+    /// once the broker drains the entry (via cancel or complete).
+    async fn stage_pending_delegation(
+        child_conn_id: &str,
+        child_conv_id: i32,
+    ) -> (
+        Arc<DelegationBroker>,
+        tokio::task::JoinHandle<DelegationOutcome>,
+    ) {
+        let mock = Arc::new(MockSpawner::new());
+        mock.queue_spawn(Ok(child_conn_id.to_string())).await;
+        mock.queue_send(Ok(child_conv_id)).await;
+        let broker = Arc::new(DelegationBroker::new(
+            mock as Arc<dyn ConnectionSpawner>,
+            Arc::new(NoopDepthLookup) as Arc<dyn ConversationDepthLookup>,
+        ));
+        let driver = {
+            let broker = broker.clone();
+            let id = child_conn_id.to_string();
+            tokio::spawn(async move { broker.handle_request(delegation_request(&id)).await })
+        };
+        // Spin until the broker has registered the pending entry so the
+        // test doesn't race the spawn/send awaits.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while broker.pending_count().await == 0 {
+            if std::time::Instant::now() >= deadline {
+                panic!("broker never registered pending entry");
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        (broker, driver)
+    }
+
+    /// `Error` alone must NOT drain the broker. The pending entry stays
+    /// in-flight so an upcoming `TurnComplete` can resolve it via
+    /// `complete_call` with the correct child-side error mapping.
+    #[tokio::test]
+    async fn dispatcher_error_alone_does_not_drain_broker_pending_entry() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let mgr = ConnectionManager::new();
+        let (broker, driver) = stage_pending_delegation("c-no-drain", 41).await;
+
+        let metrics = Arc::new(EventBusMetrics::default());
+        let bus = Arc::new(InternalEventBus::new(metrics));
+        let dispatcher = tokio::spawn(lifecycle_subscriber_task(
+            db.conn.clone(),
+            mgr.clone_ref(),
+            bus.clone(),
+            Some(broker.clone()),
+        ));
+
+        bus.send(Arc::new(EventEnvelope {
+            seq: 1,
+            connection_id: "c-no-drain".to_string(),
+            payload: AcpEvent::Error {
+                message: "Gemini refused the prompt.".into(),
+                agent_type: "gemini".into(),
+                code: Some("turn_failed_refusal".into()),
+                // turn-failure Error: non-terminal. Worker MUST no-op (the
+                // upcoming TurnComplete maps the outcome via complete_call).
+                terminal: false,
+            },
+        }));
+
+        // Give the worker time to process Error. Without the fix it would
+        // call `cancel_by_child_connection` and the pending entry would
+        // drop to 0 here.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            broker.pending_count().await,
+            1,
+            "Error-only event must NOT drain the pending delegation — TurnComplete still needs to map it"
+        );
+
+        // Cleanup: send Disconnected so the driver resolves, dispatcher exits.
+        bus.send(Arc::new(EventEnvelope {
+            seq: 2,
+            connection_id: "c-no-drain".to_string(),
+            payload: AcpEvent::StatusChanged {
+                status: ConnectionStatus::Disconnected,
+            },
+        }));
+        drop(bus);
+        let _ = driver.await;
+        let _ = dispatcher.await;
+    }
+
+    /// `Error` → `Disconnected` (the genuinely terminal path emitted by
+    /// `connection.rs:488` → 514) must drain the broker on Disconnected
+    /// AND thread the buffered Error detail into the canceled reason, so
+    /// the parent agent's `delegate_to_agent` tool result reads with the
+    /// real failure cause instead of the opaque default.
+    #[tokio::test]
+    async fn dispatcher_error_then_disconnected_threads_buffered_detail_to_broker() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let mgr = ConnectionManager::new();
+        let (broker, driver) = stage_pending_delegation("c-auth-fail", 42).await;
+
+        let metrics = Arc::new(EventBusMetrics::default());
+        let bus = Arc::new(InternalEventBus::new(metrics));
+        let dispatcher = tokio::spawn(lifecycle_subscriber_task(
+            db.conn.clone(),
+            mgr.clone_ref(),
+            bus.clone(),
+            Some(broker.clone()),
+        ));
+
+        bus.send(Arc::new(EventEnvelope {
+            seq: 1,
+            connection_id: "c-auth-fail".to_string(),
+            payload: AcpEvent::Error {
+                message: "Authentication required".into(),
+                agent_type: "gemini".into(),
+                code: Some("auth_required".into()),
+                // Genuinely terminal: matches `connection.rs:493`, the only
+                // emit site where the run_connection task is unwinding.
+                terminal: true,
+            },
+        }));
+        bus.send(Arc::new(EventEnvelope {
+            seq: 2,
+            connection_id: "c-auth-fail".to_string(),
+            payload: AcpEvent::StatusChanged {
+                status: ConnectionStatus::Disconnected,
+            },
+        }));
+
+        let outcome = driver.await.unwrap();
+        match &outcome {
+            DelegationOutcome::Err { code, message, .. } => {
+                assert_eq!(code, "canceled");
+                assert_eq!(
+                    message,
+                    "canceled: child session ended without TurnComplete: \
+                     [auth_required] Authentication required",
+                    "the buffered Error detail must be stitched into the canceled reason"
+                );
+            }
+            other => panic!("expected Err{{canceled}}, got {other:?}"),
+        }
+
+        drop(bus);
+        let _ = dispatcher.await;
+    }
+
+    /// Bare `Disconnected` (no preceding Error — e.g. clean transport close
+    /// with a delegation still in flight) must still drain the broker,
+    /// but with the default fallback reason since there's nothing buffered.
+    #[tokio::test]
+    async fn dispatcher_disconnected_alone_drains_broker_with_default_reason() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let mgr = ConnectionManager::new();
+        let (broker, driver) = stage_pending_delegation("c-bare-disco", 43).await;
+
+        let metrics = Arc::new(EventBusMetrics::default());
+        let bus = Arc::new(InternalEventBus::new(metrics));
+        let dispatcher = tokio::spawn(lifecycle_subscriber_task(
+            db.conn.clone(),
+            mgr.clone_ref(),
+            bus.clone(),
+            Some(broker.clone()),
+        ));
+
+        bus.send(Arc::new(EventEnvelope {
+            seq: 1,
+            connection_id: "c-bare-disco".to_string(),
+            payload: AcpEvent::StatusChanged {
+                status: ConnectionStatus::Disconnected,
+            },
+        }));
+
+        let outcome = driver.await.unwrap();
+        match &outcome {
+            DelegationOutcome::Err { code, message, .. } => {
+                assert_eq!(code, "canceled");
+                assert_eq!(message, "canceled: child session ended without TurnComplete");
+            }
+            other => panic!("expected Err{{canceled}}, got {other:?}"),
+        }
+
+        drop(bus);
+        let _ = dispatcher.await;
+    }
+
+    /// F2 regression: a non-terminal `Error` (e.g. `session/load` fallback,
+    /// `turn_failure_error_event`, idle SetMode failure) must NOT pollute
+    /// `last_error`. If it did, an unrelated future `Disconnected` would
+    /// stitch a stale detail into the broker's canceled reason. The fix
+    /// gates the buffer on `terminal == true` — only the run_connection
+    /// failure path qualifies. (Without this fix, the assertion below sees
+    /// `…: [session_load_failed] Failed to load session…` instead of the
+    /// default.)
+    #[tokio::test]
+    async fn dispatcher_non_terminal_error_does_not_pollute_disconnected_drain_reason() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let mgr = ConnectionManager::new();
+        let (broker, driver) = stage_pending_delegation("c-nonterm", 44).await;
+
+        let metrics = Arc::new(EventBusMetrics::default());
+        let bus = Arc::new(InternalEventBus::new(metrics));
+        let dispatcher = tokio::spawn(lifecycle_subscriber_task(
+            db.conn.clone(),
+            mgr.clone_ref(),
+            bus.clone(),
+            Some(broker.clone()),
+        ));
+
+        // A non-terminal Error fires first (e.g. recoverable session/load
+        // fallback during child setup). The worker MUST ignore it.
+        bus.send(Arc::new(EventEnvelope {
+            seq: 1,
+            connection_id: "c-nonterm".to_string(),
+            payload: AcpEvent::Error {
+                message: "Failed to load session, starting new: stale id".into(),
+                agent_type: "gemini".into(),
+                code: None,
+                terminal: false,
+            },
+        }));
+        // Then a later, unrelated Disconnected (e.g. the parent disconnects).
+        bus.send(Arc::new(EventEnvelope {
+            seq: 2,
+            connection_id: "c-nonterm".to_string(),
+            payload: AcpEvent::StatusChanged {
+                status: ConnectionStatus::Disconnected,
+            },
+        }));
+
+        let outcome = driver.await.unwrap();
+        match &outcome {
+            DelegationOutcome::Err { code, message, .. } => {
+                assert_eq!(code, "canceled");
+                assert_eq!(
+                    message, "canceled: child session ended without TurnComplete",
+                    "non-terminal Error must NOT be buffered into the broker's cancel reason"
+                );
+            }
+            other => panic!("expected Err{{canceled}}, got {other:?}"),
+        }
+
+        drop(bus);
+        let _ = dispatcher.await;
+    }
+
+    /// F2 row-state regression: a non-terminal `Error` while the
+    /// conversation is mid-prompt (status = InProgress) must NOT flip the
+    /// row to Cancelled — that would briefly flash "Cancelled" in the
+    /// sidebar before the next TurnComplete corrects it. The worker only
+    /// runs `handle_terminal_event` when `terminal == true`.
+    #[tokio::test]
+    async fn dispatcher_non_terminal_error_does_not_flip_conversation_row() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let folder_id = test_helpers::seed_folder(&db, "/tmp/f2-row-noflip").await;
+        let conv =
+            conversation_service::create(&db.conn, folder_id, AgentType::ClaudeCode, None, None)
+                .await
+                .unwrap();
+        assert_eq!(
+            read_row_status(&db, conv.id).await,
+            ConversationStatus::InProgress
+        );
+
+        let mgr = ConnectionManager::new();
+        {
+            let mut map = mgr.connections.lock().await;
+            map.insert(
+                "c-row".to_string(),
+                fake_connection_with_state("c-row", Some(conv.id)),
+            );
+        }
+
+        let metrics = Arc::new(EventBusMetrics::default());
+        let bus = Arc::new(InternalEventBus::new(metrics));
+        let dispatcher = tokio::spawn(lifecycle_subscriber_task(
+            db.conn.clone(),
+            mgr.clone_ref(),
+            bus.clone(),
+            None,
+        ));
+
+        // ConversationLinked first so the cache binds (matches production:
+        // try_cache_link runs before any terminal event).
+        bus.send(Arc::new(EventEnvelope {
+            seq: 1,
+            connection_id: "c-row".to_string(),
+            payload: AcpEvent::ConversationLinked {
+                conversation_id: conv.id,
+                folder_id,
+                parent_conversation_id: None,
+                parent_tool_use_id: None,
+            },
+        }));
+        bus.send(Arc::new(EventEnvelope {
+            seq: 2,
+            connection_id: "c-row".to_string(),
+            payload: AcpEvent::Error {
+                message: "Failed to set mode: bad id".into(),
+                agent_type: "claude_code".into(),
+                code: None,
+                terminal: false,
+            },
+        }));
+
+        // Give the worker time to (NOT) process the row flip.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            read_row_status(&db, conv.id).await,
+            ConversationStatus::InProgress,
+            "non-terminal Error must leave the row's InProgress status intact"
+        );
+
+        drop(bus);
+        let _ = dispatcher.await;
     }
 }
