@@ -132,6 +132,16 @@ async fn handle_acp_envelope(
                 match guard.get_mut(connection_id) {
                     Some(session) => {
                         session.content_buffer.push_str(text);
+                        eprintln!(
+                            "[SessionEventSub] ContentDelta connection={} channel={} sender={} agent={} delta_len={} buffer_len={} last_flushed_ms={}",
+                            connection_id,
+                            session.channel_id,
+                            session.sender_id,
+                            session.agent_type,
+                            text.len(),
+                            session.content_buffer.len(),
+                            session.last_flushed.elapsed().as_millis()
+                        );
                         if session.content_buffer.len() >= BUFFER_FLUSH_THRESHOLD
                             && session.last_flushed.elapsed() >= Duration::from_secs(2)
                         {
@@ -413,6 +423,17 @@ async fn handle_acp_envelope(
             if let Some(session) = guard.get_mut(connection_id) {
                 let channel_id = session.channel_id;
                 let conv_id = session.conversation_id;
+                eprintln!(
+                    "[SessionEventSub] TurnComplete connection={} channel={} sender={} agent={} event_agent={} stop_reason={} buffer_len={} tool_count={}",
+                    connection_id,
+                    channel_id,
+                    session.sender_id,
+                    session.agent_type,
+                    agent_type,
+                    stop_reason,
+                    session.content_buffer.len(),
+                    session.tool_calls.len()
+                );
                 let content = std::mem::take(&mut session.content_buffer);
                 let tool_count = session.tool_calls.len();
                 session.tool_calls.clear();
@@ -553,6 +574,10 @@ async fn flush_progress(
     };
 
     for (channel_id, text) in updates {
+        eprintln!(
+            "[SessionEventSub] flush_progress send channel={} text={}",
+            channel_id, text
+        );
         let msg = RichMessage::info(text);
         let _ = manager.send_to_channel(channel_id, &msg).await;
     }
