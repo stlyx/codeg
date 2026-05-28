@@ -1312,7 +1312,7 @@ export interface AgentInstallEvent {
 
 // ─── Chat Channels ───
 
-export type ChannelType = "lark" | "telegram" | "weixin"
+export type ChannelType = "lark" | "telegram" | "welink" | "weixin"
 
 export type ChannelConnectionStatus =
   | "connected"
