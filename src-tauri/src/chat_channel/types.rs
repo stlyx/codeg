@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum ChannelType {
     Lark,
     Telegram,
+    Welink,
     Weixin,
 }
 
@@ -26,11 +27,34 @@ pub struct WeixinConfig {
     pub base_url: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct WelinkConfig {
+    pub group_id: String,
+    pub send_http_url: String,
+    #[serde(default = "default_welink_cli_path")]
+    pub welink_cli_path: String,
+    #[serde(default)]
+    pub include_sender: Vec<String>,
+    #[serde(default)]
+    pub exclude_sender: Vec<String>,
+    #[serde(default = "default_welink_request_timeout_ms")]
+    pub request_timeout_ms: u64,
+}
+
+fn default_welink_cli_path() -> String {
+    "welink-cli".to_string()
+}
+
+fn default_welink_request_timeout_ms() -> u64 {
+    10_000
+}
+
 impl std::fmt::Display for ChannelType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ChannelType::Lark => write!(f, "lark"),
             ChannelType::Telegram => write!(f, "telegram"),
+            ChannelType::Welink => write!(f, "welink"),
             ChannelType::Weixin => write!(f, "weixin"),
         }
     }

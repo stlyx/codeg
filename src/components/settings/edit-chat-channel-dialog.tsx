@@ -7,6 +7,7 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
   DialogContent,
@@ -46,6 +47,19 @@ export function EditChatChannelDialog({
   const [chatId, setChatId] = useState(config.chat_id ?? "")
   const [appId, setAppId] = useState(config.app_id ?? "")
   const [baseUrl] = useState(config.base_url ?? "")
+  const [welinkGroupId, setWelinkGroupId] = useState(config.group_id ?? "")
+  const [welinkSendHttpUrl, setWelinkSendHttpUrl] = useState(
+    config.send_http_url ?? ""
+  )
+  const [welinkCliPath, setWelinkCliPath] = useState(
+    config.welink_cli_path ?? "welink-cli"
+  )
+  const [includeSender, setIncludeSender] = useState(
+    arrayToLines(config.include_sender)
+  )
+  const [excludeSender, setExcludeSender] = useState(
+    arrayToLines(config.exclude_sender)
+  )
   const [dailyReportEnabled, setDailyReportEnabled] = useState(
     channel.daily_report_enabled
   )
@@ -67,9 +81,27 @@ export function EditChatChannelDialog({
       setError(t("nameRequired"))
       return
     }
-    if (channel.channel_type !== "weixin" && !chatId.trim()) {
+    if (
+      (channel.channel_type === "telegram" ||
+        channel.channel_type === "lark") &&
+      !chatId.trim()
+    ) {
       setError(t("chatIdRequired"))
       return
+    }
+    if (channel.channel_type === "welink") {
+      if (!welinkGroupId.trim()) {
+        setError(t("welinkGroupIdRequired"))
+        return
+      }
+      if (!welinkSendHttpUrl.trim()) {
+        setError(t("welinkSendHttpUrlRequired"))
+        return
+      }
+      if (!welinkCliPath.trim()) {
+        setError(t("welinkCliPathRequired"))
+        return
+      }
     }
 
     setLoading(true)
@@ -78,9 +110,17 @@ export function EditChatChannelDialog({
       const configJson =
         channel.channel_type === "weixin"
           ? JSON.stringify({ base_url: baseUrl })
-          : channel.channel_type === "lark"
-            ? JSON.stringify({ app_id: appId, chat_id: chatId })
-            : JSON.stringify({ chat_id: chatId })
+          : channel.channel_type === "welink"
+            ? JSON.stringify({
+                group_id: welinkGroupId.trim(),
+                send_http_url: welinkSendHttpUrl.trim(),
+                welink_cli_path: welinkCliPath.trim(),
+                include_sender: linesToArray(includeSender),
+                exclude_sender: linesToArray(excludeSender),
+              })
+            : channel.channel_type === "lark"
+              ? JSON.stringify({ app_id: appId, chat_id: chatId })
+              : JSON.stringify({ chat_id: chatId })
 
       await updateChatChannel({
         id: channel.id,
@@ -110,6 +150,11 @@ export function EditChatChannelDialog({
     channel,
     appId,
     baseUrl,
+    welinkGroupId,
+    welinkSendHttpUrl,
+    welinkCliPath,
+    includeSender,
+    excludeSender,
     dailyReportEnabled,
     dailyReportTime,
     onOpenChange,
@@ -150,7 +195,9 @@ export function EditChatChannelDialog({
               <label className="text-xs font-medium">
                 {channel.channel_type === "telegram"
                   ? "Bot Token"
-                  : "App Secret"}
+                  : channel.channel_type === "welink"
+                    ? t("welinkToken")
+                    : "App Secret"}
               </label>
               <Input
                 type="password"
@@ -163,7 +210,8 @@ export function EditChatChannelDialog({
             </div>
           )}
 
-          {channel.channel_type !== "weixin" && (
+          {(channel.channel_type === "telegram" ||
+            channel.channel_type === "lark") && (
             <div className="space-y-1.5">
               <label className="text-xs font-medium">Chat ID</label>
               <Input
@@ -176,6 +224,67 @@ export function EditChatChannelDialog({
                 }
               />
             </div>
+          )}
+
+          {channel.channel_type === "welink" && (
+            <>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkGroupId")}
+                </label>
+                <Input
+                  value={welinkGroupId}
+                  onChange={(e) => setWelinkGroupId(e.target.value)}
+                  placeholder="957084088626496500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkSendHttpUrl")}
+                </label>
+                <Input
+                  value={welinkSendHttpUrl}
+                  onChange={(e) => setWelinkSendHttpUrl(e.target.value)}
+                  placeholder="http://xiaoluban.rnd.example.com:80/"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkCliPath")}
+                </label>
+                <Input
+                  value={welinkCliPath}
+                  onChange={(e) => setWelinkCliPath(e.target.value)}
+                  placeholder="welink-cli"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("includeSender")}
+                </label>
+                <Textarea
+                  value={includeSender}
+                  onChange={(e) => setIncludeSender(e.target.value)}
+                  placeholder={t("senderListPlaceholder")}
+                  className="min-h-20"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("excludeSender")}
+                </label>
+                <Textarea
+                  value={excludeSender}
+                  onChange={(e) => setExcludeSender(e.target.value)}
+                  placeholder={t("senderListPlaceholder")}
+                  className="min-h-20"
+                />
+              </div>
+            </>
           )}
 
           {channel.channel_type === "weixin" && baseUrl && (
@@ -229,4 +338,19 @@ export function EditChatChannelDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+function linesToArray(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+function arrayToLines(value: unknown): string {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string")
+        .join("\n")
+    : ""
 }
