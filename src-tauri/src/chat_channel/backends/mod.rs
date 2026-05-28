@@ -1,6 +1,7 @@
 pub mod lark;
 pub mod telegram;
 pub mod weixin;
+pub mod welink;
 
 use super::error::ChatChannelError;
 use super::traits::ChatChannelBackend;
@@ -60,6 +61,22 @@ pub fn create_backend(
                 token,
                 cfg.chat_id,
             )))
+        }
+        ChannelType::Welink => {
+            let cfg: WelinkConfig = serde_json::from_value(config.clone()).map_err(|e| {
+                ChatChannelError::ConfigurationInvalid(format!("Invalid WeLink config: {e}"))
+            })?;
+            if cfg.group_id.is_empty() || cfg.send_http_url.is_empty() {
+                return Err(ChatChannelError::ConfigurationInvalid(
+                    "group_id and send_http_url are required".into(),
+                ));
+            }
+            if cfg.welink_cli_path.is_empty() {
+                return Err(ChatChannelError::ConfigurationInvalid(
+                    "welink_cli_path is required".into(),
+                ));
+            }
+            Ok(Box::new(welink::WelinkBackend::new(channel_id, token, cfg)))
         }
     }
 }
