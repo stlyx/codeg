@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
 import {
   Dialog,
   DialogContent,
@@ -47,6 +48,11 @@ export function AddChatChannelDialog({
   const [appId, setAppId] = useState("")
   const [baseUrl, setBaseUrl] = useState("https://ilinkai.weixin.qq.com")
   const [topicMode, setTopicMode] = useState(false)
+  const [welinkGroupId, setWelinkGroupId] = useState("")
+  const [welinkSendHttpUrl, setWelinkSendHttpUrl] = useState("")
+  const [welinkCliPath, setWelinkCliPath] = useState("welink-cli")
+  const [includeSender, setIncludeSender] = useState("")
+  const [excludeSender, setExcludeSender] = useState("")
   const [dailyReportEnabled, setDailyReportEnabled] = useState(false)
   const [dailyReportTime, setDailyReportTime] = useState("18:00")
   const topicModeId = useId()
@@ -59,6 +65,11 @@ export function AddChatChannelDialog({
     setAppId("")
     setBaseUrl("https://ilinkai.weixin.qq.com")
     setTopicMode(false)
+    setWelinkGroupId("")
+    setWelinkSendHttpUrl("")
+    setWelinkCliPath("welink-cli")
+    setIncludeSender("")
+    setExcludeSender("")
     setDailyReportEnabled(false)
     setDailyReportTime("18:00")
     setError(null)
@@ -81,9 +92,26 @@ export function AddChatChannelDialog({
       setError(t("tokenRequired"))
       return
     }
-    if (channelType !== "weixin" && !chatId.trim()) {
+    if (
+      (channelType === "telegram" || channelType === "lark") &&
+      !chatId.trim()
+    ) {
       setError(t("chatIdRequired"))
       return
+    }
+    if (channelType === "welink") {
+      if (!welinkGroupId.trim()) {
+        setError(t("welinkGroupIdRequired"))
+        return
+      }
+      if (!welinkSendHttpUrl.trim()) {
+        setError(t("welinkSendHttpUrlRequired"))
+        return
+      }
+      if (!welinkCliPath.trim()) {
+        setError(t("welinkCliPathRequired"))
+        return
+      }
     }
 
     setLoading(true)
@@ -92,9 +120,17 @@ export function AddChatChannelDialog({
       const configJson =
         channelType === "weixin"
           ? JSON.stringify({ base_url: baseUrl })
-          : channelType === "lark"
-            ? JSON.stringify({ app_id: appId, chat_id: chatId })
-            : JSON.stringify({ chat_id: chatId, topic_mode: topicMode })
+          : channelType === "welink"
+            ? JSON.stringify({
+                group_id: welinkGroupId.trim(),
+                send_http_url: welinkSendHttpUrl.trim(),
+                welink_cli_path: welinkCliPath.trim(),
+                include_sender: linesToArray(includeSender),
+                exclude_sender: linesToArray(excludeSender),
+              })
+            : channelType === "lark"
+              ? JSON.stringify({ app_id: appId, chat_id: chatId })
+              : JSON.stringify({ chat_id: chatId, topic_mode: topicMode })
 
       const channel = await createChatChannel({
         name: name.trim(),
@@ -125,6 +161,11 @@ export function AddChatChannelDialog({
     appId,
     baseUrl,
     topicMode,
+    welinkGroupId,
+    welinkSendHttpUrl,
+    welinkCliPath,
+    includeSender,
+    excludeSender,
     dailyReportEnabled,
     dailyReportTime,
     handleOpenChange,
@@ -161,6 +202,7 @@ export function AddChatChannelDialog({
               <SelectContent>
                 <SelectItem value="telegram">Telegram</SelectItem>
                 <SelectItem value="lark">{t("lark")}</SelectItem>
+                <SelectItem value="welink">{t("welink")}</SelectItem>
                 <SelectItem value="weixin">{t("weixin")}</SelectItem>
               </SelectContent>
             </Select>
@@ -180,20 +222,28 @@ export function AddChatChannelDialog({
           {channelType !== "weixin" && (
             <div className="space-y-1.5">
               <label className="text-xs font-medium">
-                {channelType === "telegram" ? "Bot Token" : "App Secret"}
+                {channelType === "telegram"
+                  ? "Bot Token"
+                  : channelType === "welink"
+                    ? t("welinkToken")
+                    : "App Secret"}
               </label>
               <Input
                 type="password"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 placeholder={
-                  channelType === "telegram" ? "123456:ABC-DEF..." : "xxxxx"
+                  channelType === "telegram"
+                    ? "123456:ABC-DEF..."
+                    : channelType === "welink"
+                      ? "token"
+                      : "xxxxx"
                 }
               />
             </div>
           )}
 
-          {channelType !== "weixin" && (
+          {(channelType === "telegram" || channelType === "lark") && (
             <div className="space-y-1.5">
               <label className="text-xs font-medium">Chat ID</label>
               <Input
@@ -224,6 +274,67 @@ export function AddChatChannelDialog({
                 />
               </div>
             </div>
+          )}
+
+          {channelType === "welink" && (
+            <>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkGroupId")}
+                </label>
+                <Input
+                  value={welinkGroupId}
+                  onChange={(e) => setWelinkGroupId(e.target.value)}
+                  placeholder="957084088626496500"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkSendHttpUrl")}
+                </label>
+                <Input
+                  value={welinkSendHttpUrl}
+                  onChange={(e) => setWelinkSendHttpUrl(e.target.value)}
+                  placeholder="http://xiaoluban.rnd.example.com:80/"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkCliPath")}
+                </label>
+                <Input
+                  value={welinkCliPath}
+                  onChange={(e) => setWelinkCliPath(e.target.value)}
+                  placeholder="welink-cli"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("includeSender")}
+                </label>
+                <Textarea
+                  value={includeSender}
+                  onChange={(e) => setIncludeSender(e.target.value)}
+                  placeholder={t("senderListPlaceholder")}
+                  className="min-h-20"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("excludeSender")}
+                </label>
+                <Textarea
+                  value={excludeSender}
+                  onChange={(e) => setExcludeSender(e.target.value)}
+                  placeholder={t("senderListPlaceholder")}
+                  className="min-h-20"
+                />
+              </div>
+            </>
           )}
 
           {channelType === "weixin" && (
@@ -276,4 +387,11 @@ export function AddChatChannelDialog({
       </DialogContent>
     </Dialog>
   )
+}
+
+function linesToArray(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
 }
