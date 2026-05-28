@@ -1912,7 +1912,7 @@ export interface AgentInstallEvent {
 
 // ─── Chat Channels ───
 
-export type ChannelType = "lark" | "telegram" | "weixin"
+export type ChannelType = "lark" | "telegram" | "welink" | "weixin"
 
 /** One configured event-notification webhook sink. */
 export interface WebhookConfig {
