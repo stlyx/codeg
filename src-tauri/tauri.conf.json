@@ -1,7 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "codeg",
-  "version": "0.41.2",
+  "version": "0.41.2-hw",
+  "version": "0.41.1",
+  "version": "0.41.2-hw",
   "identifier": "app.codeg",
   "build": {
     "beforeDevCommand": "pnpm tauri:before-dev",
