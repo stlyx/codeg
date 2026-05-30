@@ -1883,6 +1883,7 @@
         "detailTitle": "子智慧體會話",
         "detailDescription": "唯讀檢視委派給子智慧體的會話內容。",
         "status": {
+          "starting": "啟動中",
           "running": "執行中",
           "ok": "完成",
           "err": {

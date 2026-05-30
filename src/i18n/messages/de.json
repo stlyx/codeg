@@ -1883,6 +1883,7 @@
         "detailTitle": "Unteragent-Konversation",
         "detailDescription": "Schreibgeschützte Ansicht der delegierten Unteragent-Konversation.",
         "status": {
+          "starting": "startet",
           "running": "läuft",
           "ok": "fertig",
           "err": {

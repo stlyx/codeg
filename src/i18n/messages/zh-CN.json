@@ -1883,6 +1883,7 @@
         "detailTitle": "子智能体会话",
         "detailDescription": "只读查看委托给子智能体的会话内容。",
         "status": {
+          "starting": "启动中",
           "running": "运行中",
           "ok": "完成",
           "err": {

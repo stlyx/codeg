@@ -1883,6 +1883,7 @@
         "detailTitle": "Conversation du sous-agent",
         "detailDescription": "Vue en lecture seule de la conversation du sous-agent délégué.",
         "status": {
+          "starting": "démarrage",
           "running": "en cours",
           "ok": "terminé",
           "err": {
