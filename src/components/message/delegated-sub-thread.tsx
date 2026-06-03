@@ -654,6 +654,7 @@ export function DelegatedSubThread({
           childConversationId={childConversationId}
           childConnectionId={childConnectionId}
           agentType={agentType}
+          kickoffTask={parsed.task}
         />
       )}
     </div>

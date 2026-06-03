@@ -62,26 +62,45 @@ export type StatusReport = {
 }
 
 /**
- * The verbatim message `get_delegation_status` returns for a still-running task
- * (`running_report` in `src-tauri/src/acp/delegation/broker.rs`). Hosts that
- * persist only `CallToolResult.content` text drop `structuredContent` — notably
- * a Claude Code session reloaded from its JSONL transcript, where the parser
- * keeps only `content[*].text`. On that historical path this sentence is the
- * ONLY signal that the poll returned "still running" rather than "completed",
- * so recognize it and synthesize a `running` status — otherwise the badge
- * degrades to a false `ok` ("done") for a task that is still in flight. It's a
- * backend protocol string (English-only), never localized UI copy.
+ * The verbatim message(s) `get_delegation_status` returns for a still-running
+ * task (`running_report` / `attach_live_reply` in
+ * `src-tauri/src/acp/delegation/broker.rs`). Hosts that persist only
+ * `CallToolResult.content` text drop `structuredContent` — notably Claude Code,
+ * which keeps only `content[*].text`. On that path this text is the ONLY signal
+ * that the poll returned "still running" rather than "completed", so recognize
+ * it and synthesize a `running` status — otherwise the badge degrades to a
+ * false `ok` ("done") for a task still in flight. These are backend protocol
+ * strings (English-only), never localized UI copy.
+ *
+ * The running marker is the STANDALONE first line `"Running."`. The optional
+ * live hint follows on its OWN line — `"Running.\nLatest sub-agent reply: <…>"`
+ * — and is child-controlled text we deliberately never match against. Anchoring
+ * to the full first line (plus, for the hint variant, the fixed second-line
+ * prefix) instead of prefix-matching arbitrary output is what keeps a
+ * *completed* result whose text merely starts with "Running. …" from being
+ * misread as still-running. The legacy long sentinel is still accepted so
+ * already-persisted historical rows resolve correctly.
  */
-const RUNNING_SENTINEL = "sub-agent is still running in the background."
+const RUNNING_MARKER = "running."
+const RUNNING_REPLY_LINE_PREFIX = "latest sub-agent reply:"
+const LEGACY_RUNNING_SENTINEL = "sub-agent is still running in the background."
 
-// EXACT (normalized) match, not a substring test: a *completed* poll's
-// content-only text is the child's arbitrary result, which could legitimately
-// quote this phrase. The backend emits the sentinel as the whole message, so
-// only text that IS the sentinel means "still running".
 function textRunningStatus(text: string | null): TaskStatus | null {
-  return text != null && text.trim().toLowerCase() === RUNNING_SENTINEL
-    ? "running"
-    : null
+  if (text == null) return null
+  const normalized = text.trim().toLowerCase()
+  if (normalized === LEGACY_RUNNING_SENTINEL) return "running"
+  // Anchor on the first line being EXACTLY the bare marker. A bare "Running."
+  // (no second line) is running; the hint variant additionally requires the
+  // second line to start with the fixed protocol prefix — the child's reply
+  // text after it is never inspected.
+  const newlineIdx = normalized.indexOf("\n")
+  const firstLine = (
+    newlineIdx === -1 ? normalized : normalized.slice(0, newlineIdx)
+  ).trim()
+  if (firstLine !== RUNNING_MARKER) return null
+  if (newlineIdx === -1) return "running"
+  const secondLine = normalized.slice(newlineIdx + 1).trimStart()
+  return secondLine.startsWith(RUNNING_REPLY_LINE_PREFIX) ? "running" : null
 }
 
 export type ResolvedBadge = { status: BadgeStatus; errorCode?: string }

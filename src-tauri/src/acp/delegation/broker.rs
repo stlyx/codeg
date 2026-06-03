@@ -56,6 +56,7 @@ use async_trait::async_trait;
 use tokio::sync::{Mutex, Notify};
 
 use crate::acp::delegation::event_emitter::{DelegationEventEmitter, NoopEventEmitter};
+use crate::acp::delegation::live_reply::{ChildLiveReplyLookup, NoopChildLiveReplyLookup};
 use crate::acp::delegation::meta_writer::{
     build_delegation_meta, is_synthetic_parent_tool_use_id, DelegationMetaWriter, NoopMetaWriter,
 };
@@ -728,9 +729,9 @@ fn running_ack(
     // surface the MCP `content` text (not `structuredContent`) — without it the
     // LLM couldn't call get_delegation_status / cancel_delegation.
     let message = format!(
-        "Delegated; the sub-agent is running in the background. task_id={call_id}. \
-         Call get_delegation_status with this task_id (optionally wait_ms) to \
-         collect the result, or cancel_delegation to stop it."
+        "Delegation successful. task_id={call_id}. Call get_delegation_status \
+         with this task_id (optionally wait_ms) to collect the result, or \
+         cancel_delegation to stop it."
     );
     DelegationTaskReport {
         task_id: Some(call_id),
@@ -776,7 +777,9 @@ fn running_report(task_id: &str, task: &RunningTask) -> DelegationTaskReport {
         agent_type: Some(task.agent_type),
         text: None,
         error_code: None,
-        message: Some("Sub-agent is still running in the background.".to_string()),
+        // Bare baseline; `get_task_status` upgrades this to a two-line
+        // "Running.\nLatest sub-agent reply: …" when the child has live output.
+        message: Some("Running.".to_string()),
         duration_ms: None,
     }
 }
@@ -1062,6 +1065,11 @@ pub struct DelegationBroker {
     /// no-op ("unknown"); production wires `DbChildStatusLookup` via
     /// `with_status_lookup`.
     status_lookup: Arc<dyn ChildStatusLookup>,
+    /// Peeks a still-running child's live session for a one-line progress hint,
+    /// used to enrich `get_delegation_status`'s running report. Defaults to a
+    /// no-op ("no hint"); production wires `ConnectionManagerLiveReplyLookup` via
+    /// `with_live_reply_lookup`.
+    live_reply_lookup: Arc<dyn ChildLiveReplyLookup>,
     pending: Arc<PendingCalls>,
     tool_calls: Arc<ToolCallTracker>,
     pre_canceled_handles: Arc<PreCanceledHandles>,
@@ -1118,6 +1126,7 @@ impl DelegationBroker {
             meta_writer,
             event_emitter,
             status_lookup: Arc::new(NoopChildStatusLookup),
+            live_reply_lookup: Arc::new(NoopChildLiveReplyLookup),
             pending: Arc::new(PendingCalls::default()),
             tool_calls: Arc::new(ToolCallTracker::default()),
             pre_canceled_handles: Arc::new(PreCanceledHandles::default()),
@@ -1132,6 +1141,18 @@ impl DelegationBroker {
     /// without growing that constructor's arity, and tests can opt in.
     pub fn with_status_lookup(mut self, status_lookup: Arc<dyn ChildStatusLookup>) -> Self {
         self.status_lookup = status_lookup;
+        self
+    }
+
+    /// Replace the live-reply lookup used to enrich `get_delegation_status`'s
+    /// running report with the child's latest one-line progress. Builder-style,
+    /// layered onto `with_writers` by the production wiring; tests opt in with a
+    /// `MockChildLiveReplyLookup`.
+    pub fn with_live_reply_lookup(
+        mut self,
+        live_reply_lookup: Arc<dyn ChildLiveReplyLookup>,
+    ) -> Self {
+        self.live_reply_lookup = live_reply_lookup;
         self
     }
 
@@ -2774,23 +2795,29 @@ impl DelegationBroker {
                     return unknown_report(task_id);
                 }
                 match inner.running.get(task_id) {
+                    // Carry the child connection id out of the lock so the live-reply
+                    // peek below runs WITHOUT the pending mutex held (lock ordering).
                     Some(r) if r.parent_connection_id == parent_connection_id => {
-                        Some(running_report(task_id, r))
+                        Some((running_report(task_id, r), r.child_connection_id.clone()))
                     }
                     Some(_) => return unknown_report(task_id),
                     None => None,
                 }
             };
-            let Some(running_report) = running else {
+            let Some((mut running_report, child_connection_id)) = running else {
                 // Neither running nor completed in memory → DB status fallback.
                 return self.status_from_db(parent_conversation_id, task_id).await;
             };
             // Running and owned. Decide whether to keep waiting.
             if matches!(wait, StatusWait::Immediate) {
+                self.attach_live_reply(&mut running_report, &child_connection_id)
+                    .await;
                 return running_report;
             }
             let now = Instant::now();
             if deadline.is_some_and(|d| now >= d) {
+                self.attach_live_reply(&mut running_report, &child_connection_id)
+                    .await;
                 return running_report;
             }
             // Park until the next completion signal, bounded by the deadline
@@ -2809,6 +2836,30 @@ impl DelegationBroker {
             }
             // Loop: re-read (the task likely just completed, or the deadline
             // passed and the next pass returns the running snapshot).
+        }
+    }
+
+    /// Upgrade a running report's bare `"Running."` message with the child's
+    /// latest one-line activity, so the parent LLM gets a concrete sign of
+    /// progress it can report in one shot (instead of polling-and-narrating).
+    /// Called only on the actual running-return paths, AFTER the pending lock is
+    /// released. A no-op when the lookup has nothing (default Noop lookup, child
+    /// gone, or no live output yet) — the report stays `"Running."`.
+    ///
+    /// The hint goes on its OWN line (`"Running.\nLatest sub-agent reply: …"`),
+    /// not appended to the marker line. On hosts that persist only the
+    /// `CallToolResult` content text (e.g. Claude Code), the frontend recognizes
+    /// a still-running poll by the standalone first line `"Running."` — keeping
+    /// the child-controlled reply text on a separate line means a *completed*
+    /// result that merely starts with "Running. …" can never be misread as
+    /// running. See `textRunningStatus` in `src/lib/delegation-status.ts`.
+    async fn attach_live_reply(
+        &self,
+        report: &mut DelegationTaskReport,
+        child_connection_id: &str,
+    ) {
+        if let Some(reply) = self.live_reply_lookup.latest_reply(child_connection_id).await {
+            report.message = Some(format!("Running.\nLatest sub-agent reply: {reply}"));
         }
     }
 
@@ -3243,6 +3294,61 @@ mod tests {
         let report = waiter.await.unwrap();
         assert_eq!(report.status, TaskStatus::Completed);
         assert_eq!(report.text.as_deref(), Some("done"));
+    }
+
+    /// A running snapshot upgrades its bare `"Running."` message with the child's
+    /// latest one-line reply when the live-reply lookup has one.
+    #[tokio::test]
+    async fn running_status_appends_live_reply_when_available() {
+        use crate::acp::delegation::live_reply::mock::MockChildLiveReplyLookup;
+
+        let mock = Arc::new(MockSpawner::new());
+        mock.queue_spawn(Ok("child-conn-1".into())).await;
+        mock.queue_send(Ok(42)).await;
+        let broker = DelegationBroker::new(
+            mock.clone() as Arc<dyn ConnectionSpawner>,
+            shallow_lookup(),
+        )
+        .with_live_reply_lookup(Arc::new(MockChildLiveReplyLookup::new(Some(
+            "Reading config.rs".into(),
+        ))));
+        enable_delegation(&broker).await;
+
+        let ack = broker.start_delegation(request(1, "pt-1")).await;
+        assert_eq!(ack.status, TaskStatus::Running);
+        let task_id = ack.task_id.clone().expect("running task carries an id");
+
+        let report = broker
+            .get_task_status("parent-conn", Some(1), &task_id, StatusWait::Immediate)
+            .await;
+        assert_eq!(report.status, TaskStatus::Running);
+        // The live hint lands on its own line so a content-only host can anchor
+        // "still running" to the standalone first line "Running.".
+        assert_eq!(
+            report.message.as_deref(),
+            Some("Running.\nLatest sub-agent reply: Reading config.rs")
+        );
+    }
+
+    /// With no live reply (default Noop lookup / child produced nothing yet) the
+    /// running snapshot stays the bare `"Running."`.
+    #[tokio::test]
+    async fn running_status_stays_bare_without_live_reply() {
+        let mock = Arc::new(MockSpawner::new());
+        mock.queue_spawn(Ok("child-conn-1".into())).await;
+        mock.queue_send(Ok(42)).await;
+        let broker =
+            DelegationBroker::new(mock.clone() as Arc<dyn ConnectionSpawner>, shallow_lookup());
+        enable_delegation(&broker).await;
+
+        let ack = broker.start_delegation(request(1, "pt-1")).await;
+        let task_id = ack.task_id.clone().expect("running task carries an id");
+
+        let report = broker
+            .get_task_status("parent-conn", Some(1), &task_id, StatusWait::Immediate)
+            .await;
+        assert_eq!(report.status, TaskStatus::Running);
+        assert_eq!(report.message.as_deref(), Some("Running."));
     }
 
     // -- Task 4.5: error paths ---------------------------------------------

@@ -48,6 +48,13 @@ interface Props {
   childConversationId: number
   childConnectionId: string | null
   agentType: AgentType | null
+  /**
+   * The parent's `delegate_to_agent` task text — the child's kickoff prompt,
+   * known synchronously in the card. Surfaced so the kickoff user turn can be
+   * shown immediately while the child's persisted transcript still lags the
+   * live stream (the agent CLI writes its JSONL asynchronously).
+   */
+  kickoffTask?: string | null
 }
 
 function useChildConnectionState(
@@ -74,37 +81,36 @@ function useChildConnectionState(
  * `MessageListView` sees streaming turns and turn completions while the
  * sheet is open.
  *
- * Mirrors the effects in `conversation-detail-panel.tsx` with two extra
- * concerns specific to this read-only sheet:
+ * Mirrors the effects in `conversation-detail-panel.tsx`, with one concern
+ * specific to this read-only sheet:
  *
- *  1. **Detail-fetch race.** Opening the sheet triggers `fetchDetail`. Its
- *     `FETCH_DETAIL_SUCCESS` reducer wipes any bridged `liveMessage`
- *     because no `awaiting_persist` syncState is in place (no user just
- *     sent a prompt — the broker did). To avoid losing the in-flight turn
- *     when detail loading completes mid-stream, a re-bridge effect fires
- *     on the `detailLoading: true → false` edge and re-dispatches
- *     `setLiveMessage` from the current `conn.liveMessage`. Using
- *     `isLive` = (connStatus === "prompting") preserves the
- *     reconnect-replay guard at SET_LIVE_MESSAGE: an actively prompting
- *     stream bypasses it, a finished message gets rejected because the
- *     freshly loaded detail.turns already contains it.
+ *  **Close-mid-stream / reopen-after-complete.** The cleanup of the
+ *  mirror-live effect intentionally does not clear `liveMessage` while
+ *  still prompting (so it remains promotable for the completeTurn edge).
+ *  If the user closes the sheet during that window and the child later
+ *  finishes, no bridge is running to dispatch `completeTurn`, leaving stale
+ *  `liveMessage` in runtime state. On reopen, `fetchDetail`'s active-data
+ *  guard would skip the refetch and the user would see a stale partial
+ *  transcript. We solve this by calling `removeConversation` on the sheet
+ *  body's full unmount — the runtime session is owned by this sheet alone,
+ *  so dropping it forces the next open to fetch the persisted detail from
+ *  scratch.
  *
- *  2. **Close-mid-stream / reopen-after-complete.** The cleanup of the
- *     mirror-live effect intentionally does not clear `liveMessage` while
- *     still prompting (so it remains promotable for the completeTurn
- *     edge). If the user closes the sheet during that window and the
- *     child later finishes, no bridge is running to dispatch
- *     `completeTurn`, leaving stale `liveMessage` in runtime state. On
- *     reopen, `fetchDetail`'s active-data guard would skip the refetch
- *     and the user would see a stale partial transcript. We solve this
- *     by calling `removeConversation` on the sheet body's full unmount —
- *     the runtime session is owned by this sheet alone, so dropping it
- *     forces the next open to fetch the persisted detail from scratch.
+ * The detail-fetch no longer races the streaming bridge: the sheet's mount
+ * fetch uses `preserveLive: true`, so `FETCH_DETAIL_SUCCESS` keeps the bridged
+ * `liveMessage` instead of wiping it — no re-bridge effect is needed.
+ *
+ * One more case is handled explicitly: **reopen-after-completion.** If the
+ * sheet mounts onto a child that already finished but whose connection still
+ * holds its final `liveMessage` (kept for a short grace period after
+ * completion), the streaming→settled `completeTurn` edge never fires and the
+ * non-live mirror is rejected while the detail loads — so the
+ * adopt-settled-reply effect promotes that retained reply directly, covering
+ * the window before the persisted transcript catches up.
  */
 function useChildLiveBridge(
   childConversationId: number,
-  childConnState: ConnectionState | undefined,
-  detailLoading: boolean
+  childConnState: ConnectionState | undefined
 ) {
   const { setLiveMessage, completeTurn, removeConversation } =
     useConversationRuntime()
@@ -117,14 +123,20 @@ function useChildLiveBridge(
     connStatusRef.current = connStatus
   }, [connStatus])
 
-  // Effect ORDER matters: completeTurn must be declared BEFORE mirror-live
-  // so React runs its setup before mirror-live's cleanup. When connStatus
-  // transitions away from "prompting", completeTurn snapshots and promotes
-  // liveMessage first; then mirror-live's cleanup can safely clear it.
+  // When connStatus transitions away from "prompting", completeTurn snapshots
+  // and promotes the live reply. This stays correct across the transition
+  // because the mirror-live effect's cleanup gates on `connStatusRef` (which
+  // still reads "prompting" at cleanup time, since React updates it only in a
+  // later setup pass) rather than on effect declaration order. We also latch
+  // whether we ever observed streaming this mount, so the adopt-settled-reply
+  // effect below can tell a fresh "reopened after the child already finished"
+  // mount from a normal streaming→settled handoff.
   const prevStatusRef = useRef(connStatus)
+  const everPromptingRef = useRef(connStatus === "prompting")
   useEffect(() => {
     const wasPrompting = prevStatusRef.current === "prompting"
     prevStatusRef.current = connStatus
+    if (connStatus === "prompting") everPromptingRef.current = true
     if (!wasPrompting || connStatus === "prompting") return
     completeTurn(childConversationId, liveMessage)
   }, [connStatus, liveMessage, childConversationId, completeTurn])
@@ -144,23 +156,34 @@ function useChildLiveBridge(
     }
   }, [liveMessage, connStatus, childConversationId, setLiveMessage])
 
-  // Re-bridge after detail-loading transitions true → false. The
-  // FETCH_DETAIL_SUCCESS reducer cleared our liveMessage; restore it from
-  // the current connection state so an actively streaming turn doesn't
-  // vanish from the sheet right after detail finishes loading.
-  const prevDetailLoadingRef = useRef(detailLoading)
+  // Adopt-settled-reply: handle reopening the sheet onto a child that ALREADY
+  // finished but whose connection still carries its final liveMessage (kept for
+  // CHILD_DETACH_GRACE_MS after completion to bridge DB lag). For such a mount
+  // the streaming→settled completeTurn edge never fires (we never saw
+  // "prompting"), and the non-live mirror above is rejected by the
+  // SET_LIVE_MESSAGE guard while the mount fetch is loading — so without this
+  // the final reply would vanish whenever the persisted transcript still lags
+  // (empty / user-only / partial detail). Adopt the retained reply directly:
+  // bridge it as live (a one-shot child's liveMessage is unambiguously its own
+  // reply, never a stale reconnect replay) then promote it to a COMPLETED local
+  // turn (no streaming affordance), where the `liveOwnsActiveTurn` projection
+  // keeps it and dedupes the persisted copy once the DB catches up. Runs at most
+  // once, and never when streaming was observed (that path promotes via the
+  // settled edge).
+  const adoptedRef = useRef(false)
   useEffect(() => {
-    const wasLoading = prevDetailLoadingRef.current
-    prevDetailLoadingRef.current = detailLoading
-    if (!wasLoading || detailLoading) return
+    if (adoptedRef.current || everPromptingRef.current) return
+    if (connStatus == null || connStatus === "prompting") return
     if (liveMessage == null) return
-    setLiveMessage(childConversationId, liveMessage, connStatus === "prompting")
+    adoptedRef.current = true
+    setLiveMessage(childConversationId, liveMessage, true)
+    completeTurn(childConversationId, liveMessage)
   }, [
-    detailLoading,
-    liveMessage,
     connStatus,
+    liveMessage,
     childConversationId,
     setLiveMessage,
+    completeTurn,
   ])
 
   // Full teardown on sheet close: drop the runtime session so the next
@@ -178,6 +201,7 @@ export function SubAgentSessionSheet({
   childConversationId,
   childConnectionId,
   agentType,
+  kickoffTask,
 }: Props) {
   const t = useTranslations("Folder.chat.delegation")
 
@@ -196,6 +220,7 @@ export function SubAgentSessionSheet({
             childConversationId={childConversationId}
             childConnectionId={childConnectionId}
             agentType={agentType}
+            kickoffTask={kickoffTask}
           />
         ) : null}
       </SheetContent>
@@ -207,33 +232,54 @@ function SubAgentSessionBody({
   childConversationId,
   childConnectionId,
   agentType,
+  kickoffTask,
 }: {
   childConversationId: number
   childConnectionId: string | null
   agentType: AgentType | null
+  kickoffTask?: string | null
 }) {
   const t = useTranslations("Folder.chat.delegation")
 
-  // Force a fresh fetch on every open. Necessary because the previous
-  // open's `useConversationDetail` auto-`fetchDetail` could still be
-  // in-flight when the user closes the sheet — its later resolution
-  // resurrects a stale runtime session that survives the unmount's
-  // `removeConversation`. The auto-fetch in `useConversationDetail`
-  // would then skip on reopen (active-data guard), surfacing a stale
-  // pre-completion transcript. `refetchDetail` bypasses that guard so
-  // the latest DB state always wins.
-  const { refetchDetail } = useConversationRuntime()
+  const childConn = useChildConnectionState(childConnectionId)
+  const connStatus = childConn?.status ?? null
+  const isChildStreaming = connStatus === "prompting"
+
+  const { refetchDetail, setLiveOwnsActiveTurn } = useConversationRuntime()
+
+  // Enter delegation-child viewer mode: mark the session live-owned and record
+  // the known kickoff task. `getTimelineTurns` then (a) synthesizes the kickoff
+  // user turn from this text while the persisted transcript still lags the live
+  // stream, so the user message shows immediately, and (b) strips the persisted
+  // copy of the reply while the live/local reply is present, so it never
+  // duplicates the stream. Re-applies if `kickoffTask` resolves late (harmless).
   useEffect(() => {
-    refetchDetail(childConversationId)
+    setLiveOwnsActiveTurn(childConversationId, true, kickoffTask ?? null)
+  }, [childConversationId, kickoffTask, setLiveOwnsActiveTurn])
+
+  // Single persisted-detail fetch on mount, always `preserveLive: true` so the
+  // bridged/promoted reply is never wiped — the render-time projection above
+  // handles dedup against the persisted copy. No settle-time refetch: when the
+  // child finishes, `completeTurn` promotes its (complete) live reply into
+  // localTurns, which the projection keeps showing; replacing it from the DB
+  // would race the still-lagging transcript and could blank the reply.
+  useEffect(() => {
+    refetchDetail(childConversationId, { preserveLive: true })
   }, [childConversationId, refetchDetail])
 
-  const { loading, error, acpLoadError } =
-    useConversationDetail(childConversationId)
+  // Reader only — its built-in auto-fetch is disabled; the effect above is
+  // the sole fetch path.
+  const { loading, error, acpLoadError } = useConversationDetail(
+    childConversationId,
+    { enabled: false }
+  )
 
-  const childConn = useChildConnectionState(childConnectionId)
-  useChildLiveBridge(childConversationId, childConn, loading)
+  // While streaming, mask loading as false: the live bridge owns the reply and
+  // the synthesized kickoff covers the user turn, so we don't want a skeleton
+  // over the live stream. Passed to MessageListView only.
+  const detailLoading = isChildStreaming ? false : loading
 
-  const connStatus = childConn?.status ?? null
+  useChildLiveBridge(childConversationId, childConn)
 
   // The child runs with the user's configured permission level, so it may
   // raise a permission request. The parent card no longer answers it inline
@@ -277,7 +323,7 @@ function SubAgentSessionBody({
           agentType={agentType ?? "claude_code"}
           connStatus={connStatus}
           isActive={false}
-          detailLoading={loading}
+          detailLoading={detailLoading}
           detailError={error}
           acpLoadError={acpLoadError}
           hideEmptyState={false}

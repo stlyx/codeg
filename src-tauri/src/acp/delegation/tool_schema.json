@@ -31,7 +31,7 @@
   },
   {
     "name": "get_delegation_status",
-    "description": "Collect a delegated task's result — or check on it — by the task_id from delegate_to_agent. The wait_ms argument picks the mode: omit it for a non-blocking snapshot (poll), or pass wait_ms to wait for a terminal state — wait_ms>0 blocks up to that many ms (capped at 60000; re-call to keep waiting), wait_ms=0 blocks with no timeout for as long as the sub-agent runs. When you just need the result, prefer blocking over repeated polling. Reports the current state — running, or a terminal completed / failed / canceled (or unknown if the id isn't recognized). A finished task includes its full result text.",
+    "description": "Collect a delegated task's result — or check on it — by the task_id from delegate_to_agent. The wait_ms argument picks the mode: omit it for a non-blocking snapshot (poll), or pass wait_ms to wait for a terminal state — wait_ms>0 blocks up to that many ms (capped at 60000; re-call to keep waiting), wait_ms=0 blocks with no timeout for as long as the sub-agent runs. When you just need the result, prefer blocking over repeated polling. Reports the current state — running, or a terminal completed / failed / canceled (or unknown if the id isn't recognized). A finished task includes its full result text. While the task is still running and you are simply waiting, do NOT emit any user-facing message between calls — just call again silently. Skip status narration like \"still running\", \"not returned yet\", or \"continuing to wait\"; it fragments the conversation. Speak to the user only when there is a terminal result to report or something genuinely needs their input.",
     "inputSchema": {
       "type": "object",
       "required": ["task_id"],

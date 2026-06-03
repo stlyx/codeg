@@ -98,8 +98,67 @@ describe("parseStatusReport", () => {
     })
   })
 
+  it("reads the bare 'Running.' running message from content-only text", () => {
+    // Current backend baseline: running_report emits the bare "Running." On a
+    // content-only host (structuredContent dropped) this is the only signal,
+    // so it must resolve to running, not a false 'ok'.
+    const report = parseStatusReport("Running.", null)
+    expect(report.status).toBe("running")
+    expect(deriveBadge("status", report, "output-available", false)).toEqual({
+      status: "checked",
+    })
+  })
+
+  it("reads the two-line 'Running.\\nLatest sub-agent reply: …' upgraded message", () => {
+    // The live hint lands on its own line; the standalone first-line marker
+    // identifies "still running" and the child's reply text is preserved.
+    const report = parseStatusReport(
+      "Running.\nLatest sub-agent reply: Reading config.rs",
+      null
+    )
+    expect(report.status).toBe("running")
+    expect(report.text).toBe(
+      "Running.\nLatest sub-agent reply: Reading config.rs"
+    )
+  })
+
+  it("does NOT misread a completed single-line 'Running. Latest sub-agent reply: …' result as running", () => {
+    // A completed child answer whose text merely STARTS WITH the running phrase
+    // on one line (no standalone marker line) must resolve to a terminal status,
+    // not running — the reply text is child-controlled and never anchored on.
+    const report = parseStatusReport(
+      "Running. Latest sub-agent reply: I finished, nothing else is running.",
+      null
+    )
+    expect(report.status).toBeNull()
+  })
+
+  it("does NOT treat a completed result whose first line only starts with 'Running' as running", () => {
+    // Anchored on the WHOLE first line being exactly "Running.", so "Running…"
+    // variants or "Running. <more on the same line>" do not match.
+    expect(
+      parseStatusReport("Running the migration now.", null).status
+    ).toBeNull()
+    expect(
+      parseStatusReport(
+        "Running.\nAll tests pass and nothing is pending.",
+        null
+      ).status
+    ).toBeNull()
+  })
+
   it("does NOT treat an ordinary completion result as still-running", () => {
     const report = parseStatusReport("The migration finished cleanly.", null)
+    expect(report.status).toBeNull()
+  })
+
+  it("does NOT classify a result that merely mentions 'Running.' mid-text as running", () => {
+    // Anchored match, not a loose substring: a completed child can incidentally
+    // write the word.
+    const report = parseStatusReport(
+      "All checks passed. Running. tests are green now.",
+      null
+    )
     expect(report.status).toBeNull()
   })
 

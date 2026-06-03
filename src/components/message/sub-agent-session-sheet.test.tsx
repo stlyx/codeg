@@ -13,6 +13,7 @@ const mockCompleteTurn = vi.fn()
 const mockRemoveConversation = vi.fn()
 const mockFetchDetail = vi.fn()
 const mockRefetchDetail = vi.fn()
+const mockSetLiveOwnsActiveTurn = vi.fn()
 const mockGetSession = vi.fn()
 const mockGetTimelineTurns = vi.fn(() => [])
 const mockRespondPermission = vi.fn()
@@ -29,6 +30,7 @@ vi.mock("@/contexts/conversation-runtime-context", async () => {
       removeConversation: mockRemoveConversation,
       fetchDetail: mockFetchDetail,
       refetchDetail: mockRefetchDetail,
+      setLiveOwnsActiveTurn: mockSetLiveOwnsActiveTurn,
       getSession: mockGetSession,
       getTimelineTurns: mockGetTimelineTurns,
       // Members that the body / list view may call but the bridge doesn't.
@@ -178,6 +180,7 @@ describe("SubAgentSessionSheet", () => {
     mockRemoveConversation.mockReset()
     mockFetchDetail.mockReset()
     mockRefetchDetail.mockReset()
+    mockSetLiveOwnsActiveTurn.mockReset()
     mockGetSession.mockReset()
     mockGetTimelineTurns.mockClear()
     mockRespondPermission.mockReset()
@@ -298,7 +301,45 @@ describe("SubAgentSessionSheet", () => {
     expect(mockRemoveConversation).toHaveBeenCalledWith(99)
   })
 
-  it("re-bridges liveMessage after detail loading transitions true → false (recovers from FETCH_DETAIL_SUCCESS wipe)", () => {
+  it("marks the session as liveOwnsActiveTurn on open so getTimelineTurns filters persisted reply turns while a live reply is present", () => {
+    mockChildConnection = makeConnState({ status: "prompting" })
+    renderWithIntl(
+      <SubAgentSessionSheet
+        open
+        onOpenChange={() => {}}
+        childConversationId={99}
+        childConnectionId="c1"
+        agentType="codex"
+      />
+    )
+    // The sheet always marks the session so the render-time projection can
+    // suppress the persisted copy of the reply while a live/local reply exists.
+    // No kickoffTask prop → null kickoff text.
+    expect(mockSetLiveOwnsActiveTurn).toHaveBeenCalledWith(99, true, null)
+  })
+
+  it("forwards the kickoff task text so the user turn can be synthesized before the transcript lands", () => {
+    mockChildConnection = makeConnState({ status: "prompting" })
+    renderWithIntl(
+      <SubAgentSessionSheet
+        open
+        onOpenChange={() => {}}
+        childConversationId={99}
+        childConnectionId="c1"
+        agentType="codex"
+        kickoffTask="check the failing tests"
+      />
+    )
+    // The card's known task is handed to the runtime so getTimelineTurns can
+    // show the kickoff immediately, independent of the async JSONL parse.
+    expect(mockSetLiveOwnsActiveTurn).toHaveBeenCalledWith(
+      99,
+      true,
+      "check the failing tests"
+    )
+  })
+
+  it("fetches on open with preserveLive:true so the bridged live reply survives the detail load", () => {
     const liveMessage = {
       id: "live-1",
       role: "assistant" as const,
@@ -309,13 +350,7 @@ describe("SubAgentSessionSheet", () => {
       status: "prompting",
       liveMessage,
     })
-    mockDetailState = {
-      detail: null,
-      loading: true,
-      error: null,
-      acpLoadError: null,
-    }
-    const { rerender } = renderWithIntl(
+    renderWithIntl(
       <SubAgentSessionSheet
         open
         onOpenChange={() => {}}
@@ -324,35 +359,43 @@ describe("SubAgentSessionSheet", () => {
         agentType="codex"
       />
     )
-    expect(mockSetLiveMessage).toHaveBeenCalledTimes(1)
-    expect(mockSetLiveMessage).toHaveBeenNthCalledWith(1, 99, liveMessage, true)
+    // The mount-time fetch must use preserveLive:true so an in-flight or
+    // already-bridged live reply is not wiped when the detail lands.
+    expect(mockRefetchDetail).toHaveBeenCalledWith(99, { preserveLive: true })
+    // The live stream is still bridged for display, with isLive=true so the
+    // SET_LIVE_MESSAGE guard accepts the active stream.
+    expect(mockSetLiveMessage).toHaveBeenCalledWith(99, liveMessage, true)
+  })
 
-    // Simulate FETCH_DETAIL_SUCCESS landing — loading flips to false. The
-    // re-bridge effect must re-dispatch setLiveMessage so the in-flight
-    // stream survives the reducer's `liveMessage: null` write.
-    mockDetailState = {
-      detail: null,
-      loading: false,
-      error: null,
-      acpLoadError: null,
+  it("does not refetch on the streaming → settled edge — the promoted local reply is kept, never replaced from the lagging DB", () => {
+    const liveMessage = {
+      id: "live-1",
+      role: "assistant" as const,
+      content: [],
+      startedAt: Date.now(),
     }
-    rerender(
-      <NextIntlClientProvider locale="en" messages={enMessages}>
-        <SubAgentSessionSheet
-          open
-          onOpenChange={() => {}}
-          childConversationId={99}
-          childConnectionId="c1"
-          agentType="codex"
-        />
-      </NextIntlClientProvider>
+    mockChildConnection = makeConnState({ status: "prompting", liveMessage })
+    renderWithIntl(
+      <SubAgentSessionSheet
+        open
+        onOpenChange={() => {}}
+        childConversationId={99}
+        childConnectionId="c1"
+        agentType="codex"
+      />
     )
-    // At least one additional setLiveMessage(99, liveMessage, true) must have
-    // fired — recovers from the detail-load wipe.
-    const calls = mockSetLiveMessage.mock.calls.filter(
-      ([cid, lm, isLive]) => cid === 99 && lm === liveMessage && isLive === true
-    )
-    expect(calls.length).toBeGreaterThanOrEqual(2)
+    // Ignore the mount-time preserveLive fetch; this asserts the settle edge.
+    mockRefetchDetail.mockClear()
+
+    // Child finishes the turn → status drops to connected. There must be NO
+    // settle-edge refetch: a plain load would wipe the just-promoted local
+    // reply, and the DB transcript may still lag (Codex Important #2). The
+    // reply is owned by completeTurn's promoted localTurn instead.
+    mockChildConnection = makeConnState({ status: "connected", liveMessage })
+    act(() => {
+      notifyStore()
+    })
+    expect(mockRefetchDetail).not.toHaveBeenCalled()
   })
 
   it("dispatches completeTurn on prompting → connected transition (turn promotion)", () => {
@@ -386,6 +429,53 @@ describe("SubAgentSessionSheet", () => {
       notifyStore()
     })
     expect(mockCompleteTurn).toHaveBeenCalledWith(99, liveMessage)
+  })
+
+  it("adopts a retained final reply when reopened onto an already-settled child (reopen-after-completion DB lag)", () => {
+    const liveMessage = {
+      id: "live-1",
+      role: "assistant" as const,
+      content: [],
+      startedAt: Date.now(),
+    }
+    // Child already finished while the sheet was closed: status is settled
+    // (connected) but the connection still carries the final liveMessage for
+    // its post-completion grace window. There is no streaming→settled edge to
+    // promote it, and the persisted transcript may still lag.
+    mockChildConnection = makeConnState({ status: "connected", liveMessage })
+    renderWithIntl(
+      <SubAgentSessionSheet
+        open
+        onOpenChange={() => {}}
+        childConversationId={99}
+        childConnectionId="c1"
+        agentType="codex"
+      />
+    )
+    // The retained reply is bridged as live (bypassing the reconnect-replay
+    // guard, since a one-shot child's liveMessage is unambiguously its reply)
+    // and promoted to a completed local turn so it survives the DB lag.
+    expect(mockSetLiveMessage).toHaveBeenCalledWith(99, liveMessage, true)
+    expect(mockCompleteTurn).toHaveBeenCalledWith(99, liveMessage)
+  })
+
+  it("does not adopt-promote when the settled child has no retained reply", () => {
+    // Settled child, no liveMessage → nothing to adopt; the DB transcript is
+    // authoritative (cold open of a fully-detached child).
+    mockChildConnection = makeConnState({
+      status: "connected",
+      liveMessage: null,
+    })
+    renderWithIntl(
+      <SubAgentSessionSheet
+        open
+        onOpenChange={() => {}}
+        childConversationId={99}
+        childConnectionId="c1"
+        agentType="codex"
+      />
+    )
+    expect(mockCompleteTurn).not.toHaveBeenCalled()
   })
 
   it("does not call setLiveMessage while the sheet is closed", () => {
@@ -427,9 +517,10 @@ describe("SubAgentSessionSheet", () => {
     expect(screen.queryByText("Read-only")).not.toBeInTheDocument()
   })
 
-  it("forces a fresh refetchDetail on every open so an in-flight fetch from a previous (now-closed) sheet can't surface stale state", () => {
-    // First open: the body mounts, refetchDetail must fire even though no
-    // session exists yet.
+  it("forces a fresh refetchDetail on every settled open so an in-flight fetch from a previous (now-closed) sheet can't surface stale state", () => {
+    // Child is idle (undefined connection ⇒ not "prompting"), so the gated
+    // fetch effect runs. First open: the body mounts, refetchDetail must fire
+    // even though no session exists yet.
     const props = {
       open: true,
       onOpenChange: () => {},
@@ -438,7 +529,7 @@ describe("SubAgentSessionSheet", () => {
       agentType: "codex" as const,
     }
     const { unmount } = renderWithIntl(<SubAgentSessionSheet {...props} />)
-    expect(mockRefetchDetail).toHaveBeenCalledWith(99)
+    expect(mockRefetchDetail).toHaveBeenCalledWith(99, { preserveLive: true })
     const firstCallCount = mockRefetchDetail.mock.calls.length
 
     // Close the sheet BEFORE any fetchDetail / refetchDetail response has
@@ -449,12 +540,14 @@ describe("SubAgentSessionSheet", () => {
     expect(mockRemoveConversation).toHaveBeenCalledWith(99)
 
     // Second open: body re-mounts. refetchDetail MUST fire again so the
-    // resurrected stale session (if any) is overwritten with the latest
-    // DB state. Without this, useConversationDetail's auto-fetch would
-    // skip on the session.detail active-data guard.
+    // resurrected stale session (if any) is overwritten with the latest DB
+    // state. The sheet disables useConversationDetail's auto-fetch, so this
+    // gated refetch is the sole fetch path.
     renderWithIntl(<SubAgentSessionSheet {...props} />)
     expect(mockRefetchDetail.mock.calls.length).toBeGreaterThan(firstCallCount)
-    expect(mockRefetchDetail).toHaveBeenLastCalledWith(99)
+    expect(mockRefetchDetail).toHaveBeenLastCalledWith(99, {
+      preserveLive: true,
+    })
   })
 
   it("invokes onOpenChange when the user closes the sheet via the close button", () => {
