@@ -2831,13 +2831,14 @@ impl DelegationBroker {
     /// task owned by another parent reports `Unknown`, never leaking it). Returns
     /// one report per requested id, in request order.
     ///
-    /// Blocking obeys [`StatusWait`]: `Immediate` returns the first snapshot;
-    /// `Bounded`/`Infinite` park on `result_notify` and wake as soon as ANY
-    /// requested task that was running transitions to a terminal state (i.e. the
-    /// batch's status changed), or — for `Bounded` — the deadline elapses. When
-    /// no requested task is running (all already terminal / cross-parent /
-    /// not-in-memory) the call returns immediately even under `Infinite`, so an
-    /// all-settled batch never parks forever.
+    /// Blocking obeys [`StatusWait`]: `Immediate` returns the first snapshot.
+    /// `Bounded`/`Infinite` return as soon as ANY requested task is terminal —
+    /// INCLUDING one already terminal at entry, so a completed result is never
+    /// held hostage to a long-running sibling (the caller re-polls the
+    /// still-running ids to collect the rest). Only an all-running batch parks:
+    /// it wakes when a task settles (the running count drops below the total) or
+    /// — for `Bounded` — when the deadline elapses. An all-settled batch returns
+    /// immediately even under `Infinite`, so it never parks forever.
     pub async fn get_tasks_status(
         &self,
         parent_connection_id: &str,
@@ -2855,13 +2856,6 @@ impl DelegationBroker {
             StatusWait::Bounded(ms) => Some(Instant::now() + Duration::from_millis(ms)),
             StatusWait::Immediate | StatusWait::Infinite => None,
         };
-        // The count of ids observed `Running` on the PREVIOUS pass. The id set
-        // is fixed and a task can only ever LEAVE the running map during a wait
-        // (it can't (re)enter), so the running count is monotonically
-        // non-increasing — a strict drop means at least one requested task's
-        // status changed, which is the batch's "any task settled" wake signal.
-        // `None` before the first pass seeds it.
-        let mut prev_running_count: Option<usize> = None;
         loop {
             // Arm the notify BEFORE the snapshot so a completion landing between
             // the snapshot and the await isn't lost (enable() registers now).
@@ -2884,30 +2878,33 @@ impl DelegationBroker {
                 .filter(|c| matches!(c, StatusClass::Running { .. }))
                 .count();
 
-            // Return now when: the poll is Immediate; or nothing is left that
-            // can change (no owned-running id — every id is terminal /
-            // cross-parent / not-in-memory, the last resolving to a terminal DB
-            // report), which also makes Infinite safe for an all-settled batch.
-            if matches!(wait, StatusWait::Immediate) || running_count == 0 {
+            // Return now when the poll is Immediate, OR when at least one
+            // requested task is already (or now) terminal — i.e. not EVERY task
+            // is still running. This honors the contract "returns as soon as ANY
+            // requested task reaches a terminal state": a mixed [terminal,
+            // running] batch surfaces the terminal report immediately instead of
+            // holding it hostage to a long-running sibling, and the caller
+            // re-polls (narrowing to the still-running ids) to collect the rest.
+            // `running_count == 0` (all settled) is the special case that also
+            // makes Infinite safe. The id set is fixed and a task can only LEAVE
+            // the running map during a wait (never (re)enter), so once a parked
+            // all-running batch is woken by a settle the count has dropped below
+            // the total and this returns; a spurious wake (another parent's task)
+            // re-snapshots all-running and re-parks.
+            if matches!(wait, StatusWait::Immediate) || running_count < task_ids.len() {
                 return self
                     .assemble_reports(parent_conversation_id, task_ids, classes)
                     .await;
             }
+            // Every requested task is still running. A `Bounded` wait gives up at
+            // its deadline and returns the running snapshot; `Infinite` parks on
+            // the notify alone.
             let now = Instant::now();
             if deadline.is_some_and(|d| now >= d) {
                 return self
                     .assemble_reports(parent_conversation_id, task_ids, classes)
                     .await;
             }
-            // Fewer running than last pass → a task settled; wake the batch and
-            // return the fresh snapshot.
-            if prev_running_count.is_some_and(|prev| running_count < prev) {
-                return self
-                    .assemble_reports(parent_conversation_id, task_ids, classes)
-                    .await;
-            }
-            prev_running_count = Some(running_count);
-
             // Park until the next completion signal, bounded by the deadline
             // when there is one (Infinite waits on the notify alone).
             match deadline {
@@ -3609,6 +3606,51 @@ mod tests {
             .await;
 
         let reports = waiter.await.unwrap();
+        assert_eq!(reports.len(), 2);
+        assert_eq!(reports[0].status, TaskStatus::Completed);
+        assert_eq!(reports[0].text.as_deref(), Some("first-done"));
+        assert_eq!(reports[1].status, TaskStatus::Running);
+    }
+
+    /// A batch `Infinite` wait must NOT hold an already-terminal result hostage
+    /// to a still-running sibling: when a task is terminal at call ENTRY (it
+    /// completed before the poll), return immediately with the current snapshot
+    /// rather than parking for the runner. This is the mixed-at-entry case the
+    /// transition-only wake used to miss — distinct from
+    /// [`batch_infinite_returns_when_any_settles`] (both running at entry).
+    #[tokio::test]
+    async fn batch_infinite_returns_immediately_when_one_already_terminal() {
+        let mock = Arc::new(MockSpawner::new());
+        let broker =
+            DelegationBroker::new(mock.clone() as Arc<dyn ConnectionSpawner>, shallow_lookup());
+        enable_delegation(&broker).await;
+        let t1 = start_running(&broker, &mock, "child-1", 1, "pt-1").await;
+        let t2 = start_running(&broker, &mock, "child-2", 2, "pt-2").await;
+        // t1 completes BEFORE the poll; t2 keeps running.
+        broker
+            .complete_call(
+                &t1,
+                DelegationOutcome::Ok(DelegationSuccess {
+                    text: "first-done".into(),
+                    child_conversation_id: 1,
+                    child_agent_type: AgentType::Codex,
+                    turn_count: 1,
+                    duration_ms: 4,
+                    token_usage: None,
+                }),
+            )
+            .await;
+
+        // Infinite wait, but one task is already terminal at entry → must return
+        // at once (a bounded timeout guards against the regression: parking here
+        // would block until t2 settles, which it never does in this test).
+        let ids = vec![t1.clone(), t2.clone()];
+        let reports = tokio::time::timeout(
+            Duration::from_secs(2),
+            broker.get_tasks_status("parent-conn", Some(1), &ids, StatusWait::Infinite),
+        )
+        .await
+        .expect("a batch with an already-terminal task must not park under Infinite");
         assert_eq!(reports.len(), 2);
         assert_eq!(reports[0].status, TaskStatus::Completed);
         assert_eq!(reports[0].text.as_deref(), Some("first-done"));
