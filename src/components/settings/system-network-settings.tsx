@@ -625,9 +625,9 @@ export function SystemNetworkSettings() {
         return
       }
 
+      // Revert + relaunch is a single locked server operation now: it responds
+      // before it exits/re-execs, so there is no separate restart call to make.
       const result = await rollbackServer()
-      // Trigger the relaunch; the server responds before it exits/re-execs.
-      await restartServer()
       const delayMs = result.restartDelayMs || restartDelayMs
 
       await runRestartCountdown(delayMs)

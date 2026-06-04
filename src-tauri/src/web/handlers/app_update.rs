@@ -162,12 +162,27 @@ fn restart_impl(state: Arc<AppState>) -> Result<UpdateActionResult, AppCommandEr
 #[cfg(not(feature = "tauri-runtime"))]
 async fn rollback_impl(state: Arc<AppState>) -> Result<UpdateActionResult, AppCommandError> {
     ensure_supported()?;
-    let _guard = state.system_op_lock.try_lock().map_err(|_| busy())?;
+    // Revert and relaunch under a *single* held lock, the same way the upgrade
+    // path's restart does. Rollback clears the staged marker, so without this an
+    // owned lock spanning revert→exit, a concurrent `perform_app_update` could
+    // slip into the gap between a separate rollback and restart and stage a new
+    // version that the restart would then boot instead of the reverted one.
+    let guard = state
+        .system_op_lock
+        .clone()
+        .try_lock_owned()
+        .map_err(|_| busy())?;
     crate::update::install::rollback()?;
+    let restart_delay_ms = crate::update::runtime::restart_delay_ms();
+    // Responds first, then exits/re-execs after a short flush delay — the lock
+    // is held until the process dies, so nothing can race the relaunch.
+    crate::update::schedule_restart(guard);
     Ok(UpdateActionResult {
         version: None,
-        need_restart: true,
-        restart_delay_ms: crate::update::runtime::restart_delay_ms(),
+        // Restart is already scheduled server-side; the client must not issue a
+        // separate `restart_app` (which would just contend for the held lock).
+        need_restart: false,
+        restart_delay_ms,
         trial_seconds: 0,
         capability: crate::update::runtime::capability(),
     })
