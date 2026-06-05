@@ -55,6 +55,21 @@ struct CachedChannel {
 struct EventConfigCache {
     lang: Lang,
     global_filter: Option<Vec<String>>,
+    /// Whether `global_filter` currently reflects a clean read for the latest
+    /// observed config. While it does NOT, the filter is UNKNOWN and
+    /// `process_envelope` fails CLOSED (suppresses all pushes) rather than fall
+    /// back to the cached value. It is false in two cases:
+    ///   - cold start, before any clean read — a startup DB error or a corrupt
+    ///     stored value must not broadcast events a restrictive config would have
+    ///     blocked, so we must not fall back to the broad default set; and
+    ///   - after a config change (epoch bump) whose new filter could not be
+    ///     loaded — the cached filter predates the change and may be BROADER than
+    ///     the user's new intent, so it must not keep gating delivery.
+    ///
+    /// `global_filter == None` is ambiguous on its own (unread vs. cleanly-read
+    /// default), and the cached value is ambiguous after a change (stale vs.
+    /// current); this flag disambiguates both.
+    filter_known: bool,
     enabled_channels: Vec<CachedChannel>,
     /// Channel-agnostic webhook sinks. Receive the same globally-filtered event
     /// feed as IM channels, but are not debounced and ignore the per-channel
@@ -71,6 +86,8 @@ impl EventConfigCache {
         Self {
             lang: Lang::default(),
             global_filter: None,
+            // Unknown until the first clean read; process_envelope fails closed.
+            filter_known: false,
             enabled_channels: Vec::new(),
             webhooks: Vec::new(),
             // Force refresh on first use
@@ -80,9 +97,21 @@ impl EventConfigCache {
     }
 
     async fn refresh_if_needed(&mut self, db: &DatabaseConnection) {
+        self.refresh_with_epoch(db, EVENT_CONFIG_EPOCH.load(Ordering::Relaxed))
+            .await;
+    }
+
+    /// Refresh against an explicitly-supplied config epoch. `refresh_if_needed`
+    /// passes the live `EVENT_CONFIG_EPOCH`; tests pass a fixed value so the
+    /// `config_changed` decision is deterministic and doesn't depend on the
+    /// process-global atomic (which other parallel tests mutate).
+    async fn refresh_with_epoch(&mut self, db: &DatabaseConnection, epoch: u64) {
         // Skip only when neither the TTL has elapsed NOR the config epoch moved.
-        let epoch = EVENT_CONFIG_EPOCH.load(Ordering::Relaxed);
-        if epoch == self.last_epoch
+        // A config write (filter, webhooks, or language) bumps the epoch. When it
+        // no longer matches the epoch of our last clean filter read, a change is
+        // pending and the cached global_filter may already be out of date.
+        let config_changed = epoch != self.last_epoch;
+        if !config_changed
             && self.last_refresh.elapsed() < Duration::from_secs(CONFIG_CACHE_TTL_SECS)
         {
             return;
@@ -92,16 +121,48 @@ impl EventConfigCache {
             self.lang = Lang::from_str_lossy(&val);
         }
 
-        // Parse as Option<Vec<String>> so JSON "null" → None (intentional, not accidental)
-        self.global_filter = app_metadata_service::get_value(db, EVENT_FILTER_KEY)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|json| {
-                serde_json::from_str::<Option<Vec<String>>>(&json)
-                    .ok()
-                    .flatten()
-            });
+        // Global event filter — the gate governing ALL delivery. Treat it as
+        // KNOWN (and only then advance the epoch/TTL below) when the read AND
+        // parse both succeed. A transient DB error or a corrupt stored value
+        // leaves the prior value untouched and the read marked failed, so:
+        //   - at cold start the filter stays UNKNOWN and process_envelope fails
+        //     CLOSED (suppresses) rather than falling back to the broad default;
+        //   - after a config change we keep retrying on the next event instead of
+        //     holding a possibly-stale (broader) filter for the whole TTL window,
+        //     and (see below) fail CLOSED meanwhile.
+        // Successful-read cases:
+        //   - no row / JSON "null" → the default set (None)
+        //   - JSON [..]            → an explicit allow-list
+        let filter_ok = match app_metadata_service::get_value(db, EVENT_FILTER_KEY).await {
+            Ok(None) => {
+                self.global_filter = None;
+                self.filter_known = true;
+                true
+            }
+            Ok(Some(json)) => match serde_json::from_str::<Option<Vec<String>>>(&json) {
+                Ok(parsed) => {
+                    self.global_filter = parsed;
+                    self.filter_known = true;
+                    true
+                }
+                // Corrupt value: keep the prior cached value, retry later.
+                Err(_) => false,
+            },
+            // DB error: keep the prior cached value, retry later.
+            Err(_) => false,
+        };
+
+        // A config change is pending (epoch advanced) but the new filter could
+        // not be loaded. The cached filter predates the change and may be BROADER
+        // than the user's new intent — keeping it as the delivery gate would leak
+        // events the change might have disabled (e.g. a just-toggled-off
+        // user_prompt_sent). Mark the filter UNKNOWN so process_envelope fails
+        // CLOSED until a clean read for this change lands. A pure TTL refresh that
+        // fails (epoch unchanged) instead keeps the still-valid prior filter, so a
+        // transient blip doesn't drop legitimate notifications when nothing changed.
+        if !filter_ok && config_changed {
+            self.filter_known = false;
+        }
 
         // Webhook delivery set — only ENABLED URLs. Absent/unparseable means no
         // webhooks configured.
@@ -122,8 +183,16 @@ impl EventConfigCache {
                 .collect();
         }
 
-        self.last_refresh = Instant::now();
-        self.last_epoch = epoch;
+        // Only mark the cache refreshed for this epoch/TTL window when the global
+        // filter — the gate governing ALL delivery — loaded cleanly. A failed
+        // filter read leaves the cache eligible to retry on the very next event
+        // instead of holding a possibly-stale (or still-unknown) filter until the
+        // TTL elapses. The other reads above already keep-prior / fail-closed on
+        // their own errors, so re-reading them while retrying is harmless.
+        if filter_ok {
+            self.last_refresh = Instant::now();
+            self.last_epoch = epoch;
+        }
     }
 }
 
@@ -197,6 +266,17 @@ async fn process_envelope(
     let Some((event_type, msg)) = parse_acp_event(&envelope.payload, config.lang) else {
         return;
     };
+
+    // Fail closed unless the global filter reflects a clean read for the latest
+    // config. An unread/unreadable filter (cold-start DB error or corrupt value)
+    // must NOT fall back to the broad default set, and a filter left stale by a
+    // config change whose new value couldn't be loaded must NOT keep gating with a
+    // possibly-broader rule. Both leave `filter_known == false`; neither
+    // `global_filter == None` nor the cached value can distinguish those states on
+    // their own, so gate on the explicit known flag.
+    if !config.filter_known {
+        return;
+    }
 
     // Global event filter first — a filtered-out event needs no bridge lock or
     // fan-out work. A null filter is the default set: opt-in events that export
@@ -419,6 +499,8 @@ mod permission_push_tests {
         EventConfigCache {
             lang: Lang::En,
             global_filter: None,
+            // Simulates a cache that has already read the filter cleanly.
+            filter_known: true,
             enabled_channels: vec![CachedChannel {
                 id: channel_id,
                 event_filter_json: None,
@@ -1152,6 +1234,286 @@ mod permission_push_tests {
         assert!(
             config.webhooks.is_empty(),
             "disabled webhook must drop out of the dispatch set within the TTL window"
+        );
+    }
+
+    /// A corrupt read AFTER a config change (epoch bumped) must fail CLOSED, not
+    /// keep gating with the now-stale prior filter. The cached value is retained
+    /// (never widened to the default set), but `filter_known` flips to false so
+    /// `process_envelope` suppresses everything until a clean read for the change
+    /// lands — the user's narrowing can't be undone by a momentary glitch.
+    #[tokio::test]
+    async fn corrupt_filter_after_config_change_fails_closed() {
+        use crate::commands::chat_channel::set_chat_event_filter_core;
+
+        let db = test_helpers::fresh_in_memory_db().await;
+
+        // Establish an explicit, restrictive filter (only "error").
+        set_chat_event_filter_core(&db, Some(vec!["error".to_string()]))
+            .await
+            .unwrap();
+        let mut config = EventConfigCache::new();
+        config.refresh_if_needed(&db.conn).await;
+        assert_eq!(config.global_filter, Some(vec!["error".to_string()]));
+        assert!(config.filter_known);
+
+        // Corrupt the stored value directly, then force a refresh via the epoch
+        // (simulating a failed read landing right after a config change).
+        app_metadata_service::upsert_value(&db.conn, EVENT_FILTER_KEY, "{not valid json")
+            .await
+            .unwrap();
+        bump_event_config_epoch();
+        config.refresh_if_needed(&db.conn).await;
+
+        assert_eq!(
+            config.global_filter,
+            Some(vec!["error".to_string()]),
+            "a corrupt stored filter must not widen delivery to the default set"
+        );
+        assert!(
+            !config.filter_known,
+            "a pending config change with a failed read must fail closed, not keep \
+             gating with the stale prior filter"
+        );
+    }
+
+    /// The Codex scenario end-to-end: a broad filter is in effect, the user
+    /// narrows it (epoch bump), but the re-read fails. The previously-broad filter
+    /// must NOT keep delivering a now-disabled event — delivery fails closed.
+    #[tokio::test]
+    async fn stale_broad_filter_after_change_fails_closed_for_delivery() {
+        use crate::commands::chat_channel::set_chat_event_filter_core;
+
+        let db = test_helpers::fresh_in_memory_db().await;
+        let (chat, rec) = manager_with_recorder(7).await;
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+
+        // Broad filter that includes turn_complete; loaded cleanly.
+        set_chat_event_filter_core(
+            &db,
+            Some(vec!["turn_complete".to_string(), "error".to_string()]),
+        )
+        .await
+        .unwrap();
+        let mut config = config_all_on(7);
+        config.refresh_if_needed(&db.conn).await;
+        assert!(config.filter_known);
+
+        // User narrows (would drop turn_complete) but the re-read fails: corrupt
+        // the stored value and bump the epoch to model the change + failed load.
+        app_metadata_service::upsert_value(&db.conn, EVENT_FILTER_KEY, "{corrupt")
+            .await
+            .unwrap();
+        bump_event_config_epoch();
+        config.refresh_if_needed(&db.conn).await;
+
+        let mut last_push = HashMap::new();
+        process_envelope(
+            &turn_complete_envelope("desktop-conn"),
+            &bridge,
+            &chat,
+            &db.conn,
+            &config,
+            &mut last_push,
+            &test_client(),
+        )
+        .await;
+
+        assert!(
+            sent(&rec).await.is_empty(),
+            "a stale-broad filter after an unloaded change must not keep delivering"
+        );
+    }
+
+    /// Contrast: a failed read during a PURE TTL refresh (no config change, epoch
+    /// unchanged) keeps the still-valid cached filter and stays KNOWN — a transient
+    /// blip must not drop legitimate notifications when nothing actually changed.
+    ///
+    /// Drives `refresh_with_epoch` with a FIXED epoch (matching the cache's
+    /// `last_epoch`) so `config_changed` is deterministically false — independent
+    /// of the process-global `EVENT_CONFIG_EPOCH`, which parallel tests mutate.
+    #[tokio::test]
+    async fn ttl_refresh_failure_without_change_keeps_filter_known() {
+        use crate::commands::chat_channel::set_chat_event_filter_core;
+
+        // Fixed epoch used for BOTH refreshes; `EventConfigCache::new()` starts
+        // `last_epoch` at 0, so 0 == 0 → no pending change on the second refresh.
+        const EPOCH: u64 = 0;
+
+        let db = test_helpers::fresh_in_memory_db().await;
+
+        // Clean broad filter that includes turn_complete.
+        set_chat_event_filter_core(
+            &db,
+            Some(vec!["turn_complete".to_string(), "error".to_string()]),
+        )
+        .await
+        .unwrap();
+        let mut config = EventConfigCache::new();
+        config.refresh_with_epoch(&db.conn, EPOCH).await;
+        assert!(config.filter_known);
+
+        // Corrupt the value, then force a TTL-only refresh at the SAME epoch:
+        // config_changed is false, so the failed read must keep the filter known.
+        app_metadata_service::upsert_value(&db.conn, EVENT_FILTER_KEY, "{corrupt")
+            .await
+            .unwrap();
+        config.last_refresh = Instant::now() - Duration::from_secs(CONFIG_CACHE_TTL_SECS + 1);
+        config.refresh_with_epoch(&db.conn, EPOCH).await;
+
+        assert!(
+            config.filter_known,
+            "a TTL-only failed read (no config change) must keep the filter known"
+        );
+        assert_eq!(
+            config.global_filter,
+            Some(vec!["turn_complete".to_string(), "error".to_string()]),
+            "and keep gating with the still-valid prior filter"
+        );
+    }
+
+    /// Cold start with the filter still UNKNOWN (never read cleanly): a default-on
+    /// event must NOT deliver. Proves the cold-start fail-open is closed — an
+    /// unreadable restrictive config can't leak through the broad default set.
+    #[tokio::test]
+    async fn unknown_filter_fails_closed_for_channels() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let (chat, rec) = manager_with_recorder(7).await;
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+        let mut config = config_all_on(7);
+        config.filter_known = false; // never read cleanly yet
+        let mut last_push = HashMap::new();
+
+        // turn_complete is a default-ON event, yet it must be suppressed while the
+        // filter is unknown.
+        process_envelope(
+            &turn_complete_envelope("desktop-conn"),
+            &bridge,
+            &chat,
+            &db.conn,
+            &config,
+            &mut last_push,
+            &test_client(),
+        )
+        .await;
+
+        assert!(
+            sent(&rec).await.is_empty(),
+            "no event may deliver before the global filter is known"
+        );
+    }
+
+    /// Cold start with an UNKNOWN filter also gates webhooks (the same upstream
+    /// fail-closed return), so a configured webhook receives nothing.
+    #[tokio::test]
+    async fn unknown_filter_fails_closed_for_webhooks() {
+        use tokio::net::TcpListener;
+
+        let db = test_helpers::fresh_in_memory_db().await;
+        let (chat, _rec) = manager_with_recorder(7).await;
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+        let mut last_push = HashMap::new();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let mut config = config_all_on(7);
+        config.filter_known = false;
+        config.webhooks = vec![format!("http://{addr}/hook")];
+
+        process_envelope(
+            &turn_complete_envelope("desktop-conn"),
+            &bridge,
+            &chat,
+            &db.conn,
+            &config,
+            &mut last_push,
+            &test_client(),
+        )
+        .await;
+
+        let accepted = tokio::time::timeout(Duration::from_millis(400), listener.accept()).await;
+        assert!(
+            accepted.is_err(),
+            "an unknown filter must not reach the webhook"
+        );
+    }
+
+    /// A corrupt stored value read at COLD START (no prior clean load) must leave
+    /// the filter UNKNOWN — not fall back to the cleanly-read default — so delivery
+    /// stays fail-closed until a valid value can be read.
+    #[tokio::test]
+    async fn cold_corrupt_filter_read_stays_unknown() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        app_metadata_service::upsert_value(&db.conn, EVENT_FILTER_KEY, "{not valid json")
+            .await
+            .unwrap();
+
+        let mut config = EventConfigCache::new();
+        config.refresh_if_needed(&db.conn).await;
+
+        assert!(
+            !config.filter_known,
+            "a cold corrupt filter read must remain unknown (fail closed), not become the default set"
+        );
+    }
+
+    /// A failed filter read must not consume the epoch/TTL: the cache keeps
+    /// retrying on the next refresh and picks up a newly-written (narrower) filter
+    /// WITHOUT another epoch bump — so a transient failure can't pin a stale,
+    /// broader filter for the whole TTL window.
+    #[tokio::test]
+    async fn failed_filter_read_keeps_retrying_until_clean() {
+        use crate::commands::chat_channel::set_chat_event_filter_core;
+
+        let db = test_helpers::fresh_in_memory_db().await;
+
+        // Clean broad filter first.
+        set_chat_event_filter_core(
+            &db,
+            Some(vec!["turn_complete".to_string(), "error".to_string()]),
+        )
+        .await
+        .unwrap();
+        let mut config = EventConfigCache::new();
+        config.refresh_if_needed(&db.conn).await;
+        assert_eq!(
+            config.global_filter,
+            Some(vec!["turn_complete".to_string(), "error".to_string()])
+        );
+
+        // Corrupt + bump epoch: refresh keeps the prior value and must NOT consume
+        // the epoch (filter read failed).
+        app_metadata_service::upsert_value(&db.conn, EVENT_FILTER_KEY, "{corrupt")
+            .await
+            .unwrap();
+        bump_event_config_epoch();
+        config.refresh_if_needed(&db.conn).await;
+        assert_eq!(
+            config.global_filter,
+            Some(vec!["turn_complete".to_string(), "error".to_string()]),
+            "keeps prior on a corrupt read"
+        );
+        assert!(
+            !config.filter_known,
+            "while the changed config is unloaded it fails closed (stale-broad guard)"
+        );
+
+        // Write a narrower VALID filter without bumping the epoch. Because the
+        // failed read did not consume the epoch/TTL, the next refresh still
+        // re-reads and narrows — rather than holding the broader filter.
+        app_metadata_service::upsert_value(&db.conn, EVENT_FILTER_KEY, "[\"error\"]")
+            .await
+            .unwrap();
+        config.refresh_if_needed(&db.conn).await;
+        assert_eq!(
+            config.global_filter,
+            Some(vec!["error".to_string()]),
+            "a failed read must keep retrying and pick up the narrower filter without a new epoch bump"
+        );
+        assert!(
+            config.filter_known,
+            "a clean read for the change restores the known state (delivery resumes)"
         );
     }
 }
