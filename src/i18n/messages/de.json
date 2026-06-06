@@ -1799,6 +1799,12 @@
         "noEnabledAgents": "Keine aktivierten Agenten",
         "openAgentsSettings": "Agenten-Einstellungen öffnen"
       },
+      "subAgentOverlay": {
+        "title": "Subagenten",
+        "collapsedSummary": "Subagenten {count}",
+        "collapseAria": "Subagenten einklappen",
+        "expandAria": "Subagenten ausklappen"
+      },
       "agentPlanOverlay": {
         "title": "Agentenplan",
         "collapsePlanAria": "Plan einklappen",
