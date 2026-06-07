@@ -172,7 +172,7 @@ const SubAgentOverlayRow = memo(function SubAgentOverlayRow({
       {(task || durationMs != null) && (
         <div className="flex items-center gap-2">
           {task && (
-            <div className="line-clamp-1 min-w-0 flex-1 break-words text-[11px] text-muted-foreground">
+            <div className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
               {task}
             </div>
           )}
