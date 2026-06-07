@@ -465,12 +465,8 @@ async fn build_tools_call_spawn(
             register_and_spawn(inflight, id, None, round_trip, render_task_report).await
         }
         "check_user_feedback" => {
-            // Optional bounded checkpoint wait; omitted / 0 → immediate snapshot.
-            // The listener clamps a positive value.
-            let wait_ms = arguments.get("wait_ms").and_then(|v| v.as_u64());
             let req = BrokerFeedbackRequest {
                 token: ctx.token.clone(),
-                wait_ms,
             };
             // Feedback uses a dedicated spawn so it can COMMIT delivery only when
             // the round-trip wins the cancel race (i.e. the result actually goes
@@ -1429,7 +1425,7 @@ mod tests {
     async fn check_user_feedback_spawns_when_enabled() {
         let line = json!({
             "jsonrpc": "2.0", "id": 30, "method": "tools/call",
-            "params": { "name": "check_user_feedback", "arguments": { "wait_ms": 0 } }
+            "params": { "name": "check_user_feedback", "arguments": {} }
         })
         .to_string();
         assert!(matches!(
@@ -1560,7 +1556,7 @@ mod tests {
             Value::from(1),
             sock,
             "tok".into(),
-            BrokerFeedbackRequest { token: "tok".into(), wait_ms: None },
+            BrokerFeedbackRequest { token: "tok".into() },
         )
         .await;
         let LineAction::Spawn(call) = action else {

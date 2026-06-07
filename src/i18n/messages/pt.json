@@ -2759,7 +2759,7 @@
   },
   "SessionFeedbackSettings": {
     "title": "Feedback ao vivo",
-    "description": "Permita que um agente perceba suas notas e correções enquanto trabalha. Quando ativado, o agente ganha uma ferramenta para verificar o feedback que você envia durante a tarefa, e as conversas mostram uma barra para enviar uma nota rápida. É um canal lateral colaborativo: o agente lê sua nota na próxima vez que verificar, sem interromper a etapa atual.",
+    "description": "Envie notas e correções a um agente enquanto ele trabalha. Quando ativado, o agente ganha uma ferramenta para verificar feedback ao vivo e as conversas mostram uma entrada de notas. Dica: o agente normalmente só verifica o feedback quando você menciona isso na mensagem — por exemplo, adicione \"verifique meu feedback ao vivo regularmente enquanto trabalha\".",
     "enable": "Ativar feedback ao vivo",
     "enableHint": "Injeta uma ferramenta de verificação de feedback nos agentes iniciados após a ativação. Desativado por padrão.",
     "save": "Salvar",

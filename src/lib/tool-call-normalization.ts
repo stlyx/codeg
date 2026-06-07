@@ -61,6 +61,7 @@ const EXACT_TOOL_NAME_ALIASES: Record<string, string> = {
   request_user_input: "question",
   // codeg multi-agent delegation MCP tools (server prefix varies by host)
   delegate_to_agent: "delegate_to_agent",
+  "mcp__codeg-mcp__delegate_to_agent": "delegate_to_agent",
   "mcp__codeg-delegate__delegate_to_agent": "delegate_to_agent",
   mcp__codeg__delegate_to_agent: "delegate_to_agent",
   get_delegation_status: "get_delegation_status",

@@ -848,7 +848,7 @@ fn load_mcp_servers_for_agent(agent_type: AgentType) -> Vec<McpServer> {
     out
 }
 
-/// Context the connection layer needs to inject the built-in `codeg-delegate`
+/// Context the connection layer needs to inject the built-in `codeg-mcp`
 /// MCP entry. Built once per `run_connection` from the live AppState pieces
 /// (broker config, token registry, UDS path) and passed through.
 ///
@@ -933,7 +933,7 @@ fn is_executable_file(path: &Path) -> bool {
     true
 }
 
-/// Append the built-in `codeg-delegate` MCP entry if delegation is enabled
+/// Append the built-in `codeg-mcp` MCP entry if delegation is enabled
 /// AND the companion binary is present on disk. Returns the per-launch token
 /// that was registered, or `None` when injection was skipped (disabled by
 /// config, or binary missing).
@@ -964,7 +964,7 @@ fn companion_features_arg(delegation_enabled: bool, feedback_enabled: bool) -> O
     Some(features.join(","))
 }
 
-/// Outcome of injecting the `codeg-delegate` companion: the per-launch token to
+/// Outcome of injecting the `codeg-mcp` companion: the per-launch token to
 /// stash for revocation, plus whether the `check_user_feedback` tool was exposed
 /// to this agent (so the session can gate submit + UI on its real capability).
 struct CompanionInjection {
@@ -972,7 +972,7 @@ struct CompanionInjection {
     feedback_available: bool,
 }
 
-async fn inject_codeg_delegate_mcp(
+async fn inject_codeg_mcp(
     servers: &mut Vec<McpServer>,
     injection: &DelegationInjection,
     parent_connection_id: &str,
@@ -1006,7 +1006,7 @@ async fn inject_codeg_delegate_mcp(
             },
         )
         .await;
-    let mut server = McpServerStdio::new("codeg-delegate", binary_path);
+    let mut server = McpServerStdio::new("codeg-mcp", binary_path);
     server = server.args(vec![
         "--parent-connection-id".to_string(),
         parent_connection_id.to_string(),
@@ -1376,12 +1376,12 @@ async fn run_connection(
                 })
                 .collect();
 
-            // Inject the built-in `codeg-delegate` MCP server. Stdio is
+            // Inject the built-in `codeg-mcp` MCP server. Stdio is
             // unconditionally supported by the ACP wire — no `mcp_caps`
             // filter needed. The returned token is stashed on the session
             // state so connection teardown can revoke it.
             let delegate_injection = if let Some(inj) = delegation_injection.as_ref() {
-                inject_codeg_delegate_mcp(&mut mcp_servers, inj, &conn_id, &cwd).await
+                inject_codeg_mcp(&mut mcp_servers, inj, &conn_id, &cwd).await
             } else {
                 None
             };
@@ -4402,14 +4402,14 @@ mod tests {
         assert!(is_opencode_subagent_invocation(AgentType::OpenCode, &input));
     }
 
-    // ─── inject_codeg_delegate_mcp: enabled=false short-circuit ──────────
+    // ─── inject_codeg_mcp: enabled=false short-circuit ──────────
     //
     // Guards the "default off" product contract: when the broker config has
     // `enabled: false` (the new production default for fresh installs), the
     // delegate-MCP injection must not push a server entry and must not
     // register a per-launch token. The early return at the top of
-    // `inject_codeg_delegate_mcp` is the single chokepoint that keeps a
-    // codeg-delegate stdio MCP out of every ACP session until the user
+    // `inject_codeg_mcp` is the single chokepoint that keeps a
+    // codeg-mcp stdio MCP out of every ACP session until the user
     // opts in via the settings panel.
     #[tokio::test]
     async fn inject_codeg_delegate_skipped_when_broker_disabled() {
@@ -4438,12 +4438,12 @@ mod tests {
         let injection = DelegationInjection {
             broker,
             tokens: Arc::new(TokenRegistry::default()),
-            socket_path: std::path::PathBuf::from("/tmp/codeg-delegate.sock"),
+            socket_path: std::path::PathBuf::from("/tmp/codeg-mcp.sock"),
             feedback: crate::acp::feedback::FeedbackRuntimeConfig::new(),
         };
 
         let mut servers: Vec<McpServer> = Vec::new();
-        let result = inject_codeg_delegate_mcp(
+        let result = inject_codeg_mcp(
             &mut servers,
             &injection,
             "parent-conn",

@@ -39,7 +39,7 @@ pub struct AppState {
     pub delegation_broker: Arc<DelegationBroker>,
     /// Per-launch ephemeral tokens identifying parent ACP connections.
     /// Registered when `load_mcp_servers_for_agent` injects the
-    /// `codeg-delegate` MCP entry, revoked on parent teardown.
+    /// `codeg-mcp` MCP entry, revoked on parent teardown.
     pub delegation_tokens: Arc<TokenRegistry>,
     /// Absolute path of the UDS / named pipe the companion connects to.
     /// PID-scoped so multiple codeg processes on the same host don't fight.

@@ -2759,7 +2759,7 @@
   },
   "SessionFeedbackSettings": {
     "title": "Retour en direct",
-    "description": "Permettez à un agent de percevoir vos notes et corrections pendant qu'il travaille. Une fois activé, l'agent dispose d'un outil pour consulter les retours que vous envoyez en cours de tâche, et les conversations affichent une barre pour envoyer une note rapide. C'est un canal secondaire coopératif : l'agent prend votre note lors de sa prochaine vérification, sans interrompre l'étape en cours.",
+    "description": "Envoyez des notes et corrections à un agent pendant qu'il travaille. Une fois activé, l'agent dispose d'un outil pour consulter les retours en direct et les conversations affichent une entrée de notes. Astuce : l'agent ne consulte généralement les retours que lorsque vous le mentionnez dans votre message — par exemple, ajoutez « vérifie régulièrement mes retours en direct pendant le travail ».",
     "enable": "Activer le retour en direct",
     "enableHint": "Ajoute un outil de consultation des retours aux agents démarrés après l'activation. Désactivé par défaut.",
     "save": "Enregistrer",

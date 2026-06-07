@@ -2759,7 +2759,7 @@
   },
   "SessionFeedbackSettings": {
     "title": "Comentarios en vivo",
-    "description": "Permite que un agente perciba tus notas y correcciones mientras trabaja. Cuando está activado, el agente obtiene una herramienta para consultar los comentarios que envías durante la tarea, y las conversaciones muestran una barra para enviar una nota rápida. Es un canal lateral cooperativo: el agente recoge tu nota la próxima vez que consulta, sin interrumpir el paso actual.",
+    "description": "Envía notas y correcciones a un agente mientras trabaja. Cuando está activado, el agente obtiene una herramienta para consultar comentarios en vivo y las conversaciones muestran una entrada de notas. Consejo: el agente normalmente solo consulta los comentarios cuando lo mencionas en tu mensaje — por ejemplo, añade \"revisa mis comentarios en vivo periódicamente mientras trabajas\".",
     "enable": "Activar comentarios en vivo",
     "enableHint": "Inyecta una herramienta para consultar comentarios en los agentes iniciados después de activarlo. Desactivado por defecto.",
     "save": "Guardar",

@@ -421,7 +421,7 @@ fn build_historical_delegation_meta(child: &DbConversationSummary) -> serde_json
 /// `meta["codeg.delegation"]` to the DB-derived snapshot. Skips blocks
 /// whose meta is already populated so the live-broker write (when present)
 /// always wins. Tool-name match is by substring to cover the
-/// MCP-prefixed (`mcp__codeg-delegate__delegate_to_agent`) and bare forms
+/// MCP-prefixed (`mcp__codeg-mcp__delegate_to_agent`) and bare forms
 /// the host may have emitted.
 fn inject_delegation_meta(turns: &mut [MessageTurn], children: &[DbConversationSummary]) {
     if children.is_empty() {
@@ -1349,7 +1349,7 @@ mod tests {
     fn inject_delegation_meta_populates_completed_child() {
         let mut turns = vec![tool_use_turn(
             Some("tu-1"),
-            "mcp__codeg-delegate__delegate_to_agent",
+            "mcp__codeg-mcp__delegate_to_agent",
         )];
         let children = vec![summary_child(42, "tu-1", "completed")];
         inject_delegation_meta(&mut turns, &children);

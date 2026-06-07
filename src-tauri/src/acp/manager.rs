@@ -13,7 +13,7 @@ use sea_orm::{
 use crate::acp::connection::{spawn_agent_connection, AgentConnection, ConnectionCommand};
 use crate::acp::error::AcpError;
 use crate::acp::feedback::{
-    bounded_feedback_batch, FeedbackItem, FeedbackStatus, FeedbackWait, PendingFeedback,
+    bounded_feedback_batch, FeedbackItem, FeedbackStatus, PendingFeedback,
     SessionFeedbackAccess, MAX_FEEDBACK_CHARS, MAX_FEEDBACK_RESPONSE_BYTES,
 };
 use crate::acp::types::{
@@ -159,7 +159,7 @@ pub struct ConnectionManager {
     /// Delegation broker + token registry + UDS path installed during app
     /// bootstrap (`install_delegation`). When present, `spawn_agent` propagates
     /// the injection to `spawn_agent_connection`, which makes
-    /// `codeg-delegate` appear in the agent's MCP server list during ACP
+    /// `codeg-mcp` appear in the agent's MCP server list during ACP
     /// init. `Arc<OnceLock>` so the inner `Self` cloned from `clone_ref` sees
     /// the install too — the lock is set once at startup and never mutated.
     delegation_injection: Arc<std::sync::OnceLock<crate::acp::connection::DelegationInjection>>,
@@ -1698,57 +1698,28 @@ impl ConnectionManager {
         Ok(item)
     }
 
-    /// Read the pending feedback for a connection WITHOUT marking it delivered,
-    /// optionally blocking (bounded) until a note arrives. Read-only — backs the
-    /// READ half of the `check_user_feedback` round-trip so the listener can
-    /// commit delivery only after the response is actually written (a dropped /
-    /// failed write leaves the notes pending for the agent's next check).
-    ///
-    /// `wait` allows a bounded checkpoint pause: with nothing pending it polls
-    /// (200 ms cadence) until a note lands or the deadline passes.
-    pub async fn read_pending_feedback(
-        &self,
-        conn_id: &str,
-        wait: FeedbackWait,
-    ) -> Vec<PendingFeedback> {
+    /// Read the pending feedback for a connection WITHOUT marking it delivered.
+    /// Returns an immediate snapshot. Read-only — backs the READ half of the
+    /// `check_user_feedback` round-trip so the listener can commit delivery only
+    /// after the response is actually written (a dropped / failed write leaves
+    /// the notes pending for the agent's next check).
+    pub async fn read_pending_feedback(&self, conn_id: &str) -> Vec<PendingFeedback> {
         let Some(state) = self.get_state(conn_id).await else {
             return Vec::new();
         };
-        let deadline = match wait {
-            FeedbackWait::Immediate => None,
-            FeedbackWait::Bounded(ms) => {
-                Some(std::time::Instant::now() + Duration::from_millis(ms))
-            }
+        let pending: Vec<PendingFeedback> = {
+            let s = state.read().await;
+            s.feedback
+                .iter()
+                .filter(|f| f.status == FeedbackStatus::Pending)
+                .map(|f| PendingFeedback {
+                    id: f.id.clone(),
+                    text: f.text.clone(),
+                    created_at: f.created_at,
+                })
+                .collect()
         };
-        loop {
-            let pending: Vec<PendingFeedback> = {
-                let s = state.read().await;
-                s.feedback
-                    .iter()
-                    .filter(|f| f.status == FeedbackStatus::Pending)
-                    .map(|f| PendingFeedback {
-                        id: f.id.clone(),
-                        text: f.text.clone(),
-                        created_at: f.created_at,
-                    })
-                    .collect()
-            };
-            if !pending.is_empty() {
-                // Chunk the response so its serialized frame stays under the
-                // transport cap; the remainder stay pending for the next check.
-                return bounded_feedback_batch(pending, MAX_FEEDBACK_RESPONSE_BYTES);
-            }
-            match deadline {
-                Some(d) => {
-                    let now = std::time::Instant::now();
-                    if now >= d {
-                        return Vec::new();
-                    }
-                    tokio::time::sleep((d - now).min(Duration::from_millis(200))).await;
-                }
-                None => return Vec::new(),
-            }
-        }
+        bounded_feedback_batch(pending, MAX_FEEDBACK_RESPONSE_BYTES)
     }
 
     /// Mark the named notes `Delivered` and broadcast the consumption. Called by
@@ -2074,10 +2045,9 @@ impl SessionFeedbackAccess for ConnectionManagerFeedbackLookup {
     async fn read_pending_feedback(
         &self,
         parent_connection_id: &str,
-        wait: FeedbackWait,
     ) -> Vec<PendingFeedback> {
         self.manager
-            .read_pending_feedback(parent_connection_id, wait)
+            .read_pending_feedback(parent_connection_id)
             .await
     }
 
@@ -4556,13 +4526,13 @@ mod tests {
         let b = mgr.submit_feedback("c1", "b".into()).await.unwrap();
 
         // READ returns both pending notes (insert order) WITHOUT mutating state.
-        let pending = mgr.read_pending_feedback("c1", FeedbackWait::Immediate).await;
+        let pending = mgr.read_pending_feedback("c1").await;
         let texts: Vec<&str> = pending.iter().map(|p| p.text.as_str()).collect();
         assert_eq!(texts, vec!["a", "b"]);
         // A second read still returns them — read is non-destructive, so an
         // abandoned (peer-closed) call leaves the notes retryable.
         assert_eq!(
-            mgr.read_pending_feedback("c1", FeedbackWait::Immediate)
+            mgr.read_pending_feedback("c1")
                 .await
                 .len(),
             2
@@ -4582,7 +4552,7 @@ mod tests {
             .await;
         // Now READ returns nothing (delivered notes are filtered out).
         assert!(mgr
-            .read_pending_feedback("c1", FeedbackWait::Immediate)
+            .read_pending_feedback("c1")
             .await
             .is_empty());
         let state = mgr.get_state("c1").await.unwrap();
@@ -4601,27 +4571,11 @@ mod tests {
     async fn read_pending_missing_connection_returns_empty() {
         let mgr = ConnectionManager::new();
         assert!(mgr
-            .read_pending_feedback("nope", FeedbackWait::Immediate)
+            .read_pending_feedback("nope")
             .await
             .is_empty());
         // Commit on a missing connection is a safe no-op.
         mgr.commit_feedback_delivered("nope", vec!["x".into()]).await;
     }
 
-    #[tokio::test]
-    async fn read_pending_bounded_wait_returns_empty_when_none_arrives() {
-        let mgr = ConnectionManager::new();
-        mgr.insert_test_connection("c1", AgentType::ClaudeCode, None, EventEmitter::Noop)
-            .await;
-        mark_feedback_ready(&mgr, "c1").await;
-        // A short bounded wait with nothing pending returns empty after the
-        // deadline (it must not hang).
-        let start = std::time::Instant::now();
-        let pending = mgr.read_pending_feedback("c1", FeedbackWait::Bounded(120)).await;
-        assert!(pending.is_empty());
-        assert!(
-            start.elapsed() >= Duration::from_millis(100),
-            "bounded wait should have polled until the deadline"
-        );
-    }
 }

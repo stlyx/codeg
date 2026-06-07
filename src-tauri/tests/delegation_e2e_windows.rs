@@ -48,7 +48,6 @@ impl codeg_lib::acp::feedback::SessionFeedbackAccess for NoFeedback {
     async fn read_pending_feedback(
         &self,
         _parent_connection_id: &str,
-        _wait: codeg_lib::acp::feedback::FeedbackWait,
     ) -> Vec<codeg_lib::acp::feedback::PendingFeedback> {
         Vec::new()
     }

@@ -2759,7 +2759,7 @@
   },
   "SessionFeedbackSettings": {
     "title": "Live Feedback",
-    "description": "Let an agent sense your notes and corrections while it's working. When enabled, the agent gets a tool to check for feedback you send mid-task, and conversations show a bar for sending a quick note. It's a cooperative side channel — the agent picks up your note the next time it checks, without interrupting the current step.",
+    "description": "Send notes and corrections to an agent while it's working. When enabled, the agent gets a tool to check for your mid-task feedback, and conversations show a note input. Tip: agents typically only check for feedback when you mention it in your prompt — for example, add \"check my live feedback regularly\" to your message so the agent knows to look.",
     "enable": "Enable live feedback",
     "enableHint": "Adds a check-for-feedback tool to agents started after this is turned on. Off by default.",
     "save": "Save",

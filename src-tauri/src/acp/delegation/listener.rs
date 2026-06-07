@@ -22,7 +22,7 @@ use crate::acp::delegation::transport::{
     BrokerResponse, BrokerStatusRequest,
 };
 use crate::acp::delegation::types::{DelegationRequest, DelegationTaskReport, TaskStatus};
-use crate::acp::feedback::{FeedbackWait, PendingFeedback, SessionFeedbackAccess};
+use crate::acp::feedback::{PendingFeedback, SessionFeedbackAccess};
 use crate::models::AgentType;
 use serde_json::Value;
 
@@ -32,12 +32,6 @@ use serde_json::Value;
 /// `wait_ms = 0` opts out of the ceiling and blocks until the task is terminal.
 const STATUS_WAIT_MAX_MS: u64 = 60_000;
 
-/// Hard ceiling on a `check_user_feedback` checkpoint wait. Shorter than the
-/// status ceiling: this blocks the agent's own turn (not a background child),
-/// so a long pause directly stalls user-visible work. Unlike status there is no
-/// `0`-means-infinite opt-out — feedback may never arrive, so every wait is
-/// bounded. The LLM re-issues the call to keep waiting.
-const FEEDBACK_WAIT_MAX_MS: u64 = 30_000;
 
 /// Pluggable "what conversation is this parent currently in?" lookup. The
 /// production impl wraps `ConnectionManager.get_state`; tests use an
@@ -209,27 +203,17 @@ impl DelegationListener {
                 // WRITE the response, and COMMIT them delivered ONLY on a
                 // successful write. A dropped/failed write skips the commit, so
                 // the notes stay pending for the agent's next check.
-                //
-                // The `wait` can park up to FEEDBACK_WAIT_MAX_MS; race the
-                // (read-only) read against peer-close on this one-shot connection
-                // so a companion that cancels (drops the request socket) doesn't
-                // leave this task parked until the deadline. Abandoning a
-                // read-only wait is free — no state was touched.
                 match self.feedback_target(&req).await {
                     None => {
                         // Invalid token: return an empty envelope (no leak of
                         // whether any feedback exists), nothing to commit.
                         write_frame(conn, &feedback_response(&[])?).await?;
                     }
-                    Some((parent_conn_id, wait)) => {
-                        let read_fut = self.feedback.read_pending_feedback(&parent_conn_id, wait);
-                        tokio::pin!(read_fut);
-                        let mut probe = [0u8; 1];
-                        let pending = tokio::select! {
-                            biased;
-                            pending = &mut read_fut => pending,
-                            _ = conn.read(&mut probe) => return Ok(()),
-                        };
+                    Some(parent_conn_id) => {
+                        let pending = self
+                            .feedback
+                            .read_pending_feedback(&parent_conn_id)
+                            .await;
                         // Read-only: the response carries the note ids
                         // (`_commit_ids`); delivery is committed LATER, by the
                         // companion's `CommitFeedback` once it actually returns
@@ -314,17 +298,11 @@ impl DelegationListener {
     }
 
     /// Validate the token and resolve the `check_user_feedback` target: the
-    /// caller's parent connection id plus the mapped wait mode (omitted / `0` →
-    /// immediate snapshot, a positive value → bounded checkpoint wait clamped to
-    /// [`FEEDBACK_WAIT_MAX_MS`]). `None` on an invalid token — the LLM can't
+    /// caller's parent connection id. `None` on an invalid token — the LLM can't
     /// usefully distinguish "no notes" from "bad token", and we don't leak which.
-    async fn feedback_target(&self, req: &BrokerFeedbackRequest) -> Option<(String, FeedbackWait)> {
+    async fn feedback_target(&self, req: &BrokerFeedbackRequest) -> Option<String> {
         let entry = self.tokens.lookup(&req.token).await?;
-        let wait = match req.wait_ms {
-            None | Some(0) => FeedbackWait::Immediate,
-            Some(ms) => FeedbackWait::Bounded(ms.min(FEEDBACK_WAIT_MAX_MS)),
-        };
-        Some((entry.parent_connection_id, wait))
+        Some(entry.parent_connection_id)
     }
 
     /// Mark the named feedback notes delivered, after the companion confirms it
@@ -582,7 +560,6 @@ mod tests {
         async fn read_pending_feedback(
             &self,
             parent_connection_id: &str,
-            _wait: FeedbackWait,
         ) -> Vec<PendingFeedback> {
             *self.read_conn.lock().await = Some(parent_connection_id.to_string());
             self.items.lock().await.clone()
@@ -1331,7 +1308,6 @@ mod tests {
         });
         let msg = BrokerMessage::Feedback(BrokerFeedbackRequest {
             token: "tok".into(),
-            wait_ms: None,
         });
         write_frame(&mut client, &msg).await.unwrap();
         let resp: BrokerResponse = read_frame(&mut client).await.unwrap();
@@ -1428,7 +1404,6 @@ mod tests {
         });
         let msg = BrokerMessage::Feedback(BrokerFeedbackRequest {
             token: "bad-token".into(),
-            wait_ms: Some(5),
         });
         write_frame(&mut client, &msg).await.unwrap();
         let resp: BrokerResponse = read_frame(&mut client).await.unwrap();
@@ -1441,71 +1416,4 @@ mod tests {
         assert!(feedback.committed.lock().await.is_empty());
     }
 
-    /// at-least-once: if the companion drops the request socket while the
-    /// feedback read is parked (a `wait_ms` checkpoint), the notes are NEVER
-    /// committed delivered — the read is abandoned with no mutation, so the
-    /// agent's next check re-delivers them.
-    #[tokio::test]
-    async fn feedback_peer_close_during_wait_does_not_commit() {
-        // A stub whose read blocks until the deadline (no notes), simulating a
-        // checkpoint wait that the companion cancels mid-flight.
-        #[derive(Default)]
-        struct BlockingRead {
-            committed: tokio::sync::Mutex<Vec<(String, Vec<String>)>>,
-        }
-        #[async_trait]
-        impl SessionFeedbackAccess for BlockingRead {
-            async fn read_pending_feedback(
-                &self,
-                _conn: &str,
-                _wait: FeedbackWait,
-            ) -> Vec<PendingFeedback> {
-                // Park long enough that the test can drop the client first.
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                Vec::new()
-            }
-            async fn commit_feedback_delivered(&self, conn: &str, ids: Vec<String>) {
-                self.committed.lock().await.push((conn.to_string(), ids));
-            }
-        }
-        let feedback = Arc::new(BlockingRead::default());
-        let tokens = Arc::new(TokenRegistry::default());
-        tokens
-            .register(
-                "tok".into(),
-                TokenEntry {
-                    parent_connection_id: "parent-conn".into(),
-                    working_dir: PathBuf::from("/tmp"),
-                },
-            )
-            .await;
-        let listener = DelegationListener::new(
-            Arc::new(DelegationBroker::new(
-                Arc::new(MockSpawner::new()) as Arc<dyn ConnectionSpawner>,
-                Arc::new(AlwaysRootLookup) as Arc<dyn ConversationDepthLookup>,
-            )),
-            tokens,
-            Arc::new(StaticParentLookup(Some(1))),
-            feedback.clone(),
-        );
-
-        let (mut client, mut server) = duplex(8 * 1024);
-        let server_task = tokio::spawn(async move { listener.serve_one(&mut server).await });
-        let msg = BrokerMessage::Feedback(BrokerFeedbackRequest {
-            token: "tok".into(),
-            wait_ms: Some(0),
-        });
-        write_frame(&mut client, &msg).await.unwrap();
-
-        // Let the server park in the read, then the companion cancels.
-        tokio::time::sleep(Duration::from_millis(30)).await;
-        drop(client);
-
-        let result = tokio::time::timeout(Duration::from_secs(2), server_task)
-            .await
-            .expect("serve_one must return after peer-close");
-        result.unwrap().unwrap();
-        // No write happened → nothing committed. The notes remain retryable.
-        assert!(feedback.committed.lock().await.is_empty());
-    }
 }

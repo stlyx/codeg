@@ -133,16 +133,10 @@ pub struct BrokerCancelTaskRequest {
 /// `check_user_feedback` MCP tool. Authenticated by the same per-launch
 /// `token`; the listener resolves the parent connection from it and scopes the
 /// drain to that connection so one parent can't read another's feedback.
+/// Always returns an immediate snapshot — no blocking wait.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrokerFeedbackRequest {
     pub token: String,
-    /// Bounded checkpoint wait, in milliseconds. `None` (omitted) returns an
-    /// immediate snapshot; a positive value blocks up to that many ms (the
-    /// listener clamps it), returning early once any note lands. There is no
-    /// "infinite" mode — feedback may never arrive, so an unbounded wait would
-    /// hang the agent's turn forever.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wait_ms: Option<u64>,
 }
 
 /// Confirm delivery of feedback notes, marking them `Delivered`. Sent by the

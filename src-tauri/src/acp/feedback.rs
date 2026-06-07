@@ -13,7 +13,7 @@
 //!   * [`FeedbackItem`] / [`FeedbackStatus`] — the stored note + its lifecycle.
 //!   * [`PendingFeedback`] — a pending note read for delivery (id retained so
 //!     the listener can mark it delivered only after the response is written).
-//!   * [`FeedbackWait`] — how long a `check_user_feedback` call may block.
+//!   * `check_user_feedback` always returns an immediate snapshot (no wait).
 //!   * [`SessionFeedbackAccess`] — the listener-facing trait the production
 //!     `ConnectionManager` implements (kept here so the listener can be unit
 //!     tested with an in-memory stub, mirroring `ParentSessionLookup`).
@@ -127,19 +127,6 @@ pub struct PendingFeedback {
     pub created_at: DateTime<Utc>,
 }
 
-/// How long a `check_user_feedback` call may block waiting for a note.
-///
-/// Unlike `get_delegation_status` there is no "infinite" mode: feedback may
-/// never arrive, so an unbounded wait would hang the agent's turn forever. A
-/// positive wait is a bounded checkpoint pause; the listener clamps it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FeedbackWait {
-    /// Return the current snapshot immediately (omitted / `wait_ms = 0`).
-    Immediate,
-    /// Block up to this many milliseconds, returning early once a note lands.
-    Bounded(u64),
-}
-
 /// Listener-facing access to a parent connection's pending feedback. The
 /// production impl (`ConnectionManagerFeedbackLookup`) wraps the
 /// `ConnectionManager`; tests use an in-memory stub. Mirrors
@@ -153,13 +140,12 @@ pub enum FeedbackWait {
 #[async_trait]
 pub trait SessionFeedbackAccess: Send + Sync {
     /// Read the pending feedback for the parent connection (resolved from the
-    /// per-launch token) WITHOUT marking it delivered, optionally blocking per
-    /// `wait` until a note arrives. Read-only: abandoning it (peer-close) leaves
-    /// state untouched. Empty when the connection is gone or nothing is pending.
+    /// per-launch token) WITHOUT marking it delivered. Returns an immediate
+    /// snapshot. Read-only: abandoning it (peer-close) leaves state untouched.
+    /// Empty when the connection is gone or nothing is pending.
     async fn read_pending_feedback(
         &self,
         parent_connection_id: &str,
-        wait: FeedbackWait,
     ) -> Vec<PendingFeedback>;
 
     /// Mark the named notes `Delivered` and broadcast the consumption. Called by

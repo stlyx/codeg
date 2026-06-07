@@ -98,11 +98,12 @@ describe("groupConsecutiveDelegationStatus", () => {
 
   it("matches host-prefixed historical names", () => {
     const out = groupConsecutiveDelegationStatus([
+      poll("mcp__codeg-mcp__get_delegation_status", "t1"),
       poll("mcp__codeg-delegate__get_delegation_status", "t1"),
       poll("codeg-delegate/get_delegation_status", "t1"),
     ])
     expect(out).toHaveLength(1)
-    expect(pollsOf(out[0])).toHaveLength(2)
+    expect(pollsOf(out[0])).toHaveLength(3)
   })
 
   it("leaves a non-status part untouched", () => {
