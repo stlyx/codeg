@@ -1,14 +1,7 @@
 "use client"
 
 import { memo, useState, useCallback } from "react"
-import {
-  Pencil,
-  Trash2,
-  Circle,
-  Plus,
-  GitBranch,
-  FolderGit2,
-} from "lucide-react"
+import { Pencil, Trash2, Circle, Plus } from "lucide-react"
 import { useTranslations } from "next-intl"
 import type { DbConversationSummary, ConversationStatus } from "@/lib/types"
 import { STATUS_ORDER } from "@/lib/types"
@@ -49,9 +42,6 @@ interface SidebarConversationCardProps {
   conversation: DbConversationSummary
   isSelected: boolean
   isOpenInTab?: boolean
-  /** True when this conversation's folder is a worktree (folder.parent_id set);
-   * selects the worktree branch icon instead of the plain branch icon. */
-  isWorktreeBranch?: boolean
   timeLabel?: string
   onSelect: (id: number, agentType: string, folderId: number) => void
   onDoubleClick?: (id: number, agentType: string, folderId: number) => void
@@ -65,7 +55,6 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
   conversation,
   isSelected,
   isOpenInTab = false,
-  isWorktreeBranch = false,
   timeLabel,
   onSelect,
   onDoubleClick,
@@ -133,14 +122,13 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
   const status = conversation.status as ConversationStatus
   const isRunning = status === "in_progress"
   const isCancelled = status === "cancelled"
-  const BranchIcon = isWorktreeBranch ? FolderGit2 : GitBranch
 
   return (
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
-            className="relative bg-sidebar"
+            className="relative h-[2rem] bg-sidebar"
             data-conv-key={`${conversation.agent_type}:${conversation.id}`}
           >
             <button
@@ -148,87 +136,93 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
               onClick={handleClick}
               onDoubleClick={handleDblClick}
               className={cn(
-                "flex w-full flex-col gap-[0.1875rem] px-2 py-[0.3125rem] text-left outline-none",
-                "rounded-[0.625rem] text-sidebar-foreground",
+                "relative flex h-[1.9375rem] w-full items-center gap-[0.625rem] text-left outline-none",
+                "rounded-full text-sidebar-foreground",
                 "transition-colors duration-[120ms]",
+                "pr-[0.5rem] pl-7",
                 isSelected
                   ? "bg-sidebar-primary/8"
                   : "hover:bg-[color-mix(in_oklab,var(--sidebar-accent),var(--sidebar-foreground)_2%)]"
               )}
             >
-              {/* Line 1 — title */}
+              <span
+                aria-hidden
+                className={cn(
+                  "pointer-events-none absolute z-0 bg-sidebar-border"
+                )}
+                style={{
+                  top: "-0.0625rem",
+                  bottom: "-0.0625rem",
+                  left: "var(--conv-rail-axis, 0.875rem)",
+                  width: "0.125rem",
+                  transform: "translateX(-50%)",
+                }}
+              />
+              <div
+                className="pointer-events-none absolute top-1/2 z-10 flex items-center justify-center"
+                style={{
+                  left: "var(--conv-rail-axis, 0.875rem)",
+                  width: "0.875rem",
+                  height: "0.875rem",
+                  transform: "translate(-50%, -50%)",
+                }}
+                aria-hidden
+              >
+                <AgentIcon
+                  agentType={conversation.agent_type}
+                  className="h-[0.75rem] w-[0.75rem]"
+                />
+                <ConversationStatusDot
+                  status={status}
+                  size="sm"
+                  className="absolute -right-0.5 -bottom-0.5 ring-2 ring-sidebar"
+                />
+              </div>
+
               <span
                 className={cn(
-                  "min-w-0 max-w-full truncate text-[0.875rem] font-normal leading-tight",
+                  "relative min-w-0 flex-1 truncate text-[0.875rem] font-normal",
                   isOpenInTab && "text-primary"
                 )}
               >
                 {conversation.title || t("untitledConversation")}
               </span>
 
-              {/* Line 2 — agent icon · branch · time */}
-              <span className="flex w-full items-center gap-[0.375rem]">
+              {isRunning ? (
                 <span
-                  className="relative flex h-[0.875rem] w-[0.875rem] shrink-0 items-center justify-center"
-                  aria-hidden
+                  className={cn(
+                    "relative inline-flex shrink-0 items-center justify-center",
+                    "h-[0.9375rem] rounded-[0.3125rem] px-[0.25rem]",
+                    "text-[0.625rem] font-semibold leading-none tracking-[0.01875rem]",
+                    "bg-amber-500/20 text-amber-600 dark:bg-amber-400/20 dark:text-amber-400"
+                  )}
                 >
-                  <AgentIcon
-                    agentType={conversation.agent_type}
-                    className="h-[0.75rem] w-[0.75rem]"
-                  />
-                  <ConversationStatusDot
-                    status={status}
-                    size="sm"
-                    className="absolute -right-0.5 -bottom-0.5 ring-2 ring-sidebar"
-                  />
+                  {tSidebar("statusRunningBadge")}
                 </span>
-
-                {conversation.git_branch ? (
-                  <span className="flex min-w-0 flex-1 items-center gap-[0.1875rem] text-[0.71875rem] text-muted-foreground/70">
-                    <BranchIcon className="h-[0.6875rem] w-[0.6875rem] shrink-0" />
-                    <span className="min-w-0 truncate">
-                      {conversation.git_branch}
-                    </span>
-                  </span>
-                ) : (
-                  <span className="min-w-0 flex-1" />
-                )}
-
-                {isRunning ? (
-                  <span
-                    className={cn(
-                      "inline-flex shrink-0 items-center justify-center",
-                      "h-[0.9375rem] rounded-[0.3125rem] px-[0.25rem]",
-                      "text-[0.625rem] font-semibold leading-none tracking-[0.01875rem]",
-                      "bg-amber-500/20 text-amber-600 dark:bg-amber-400/20 dark:text-amber-400"
-                    )}
-                  >
-                    {tSidebar("statusRunningBadge")}
-                  </span>
-                ) : isCancelled ? (
-                  <span
-                    className={cn(
-                      "inline-flex shrink-0 items-center justify-center",
-                      "h-[0.9375rem] rounded-[0.3125rem] px-[0.25rem]",
-                      "text-[0.625rem] font-semibold leading-none tracking-[0.01875rem]",
-                      "bg-destructive/20 text-destructive"
-                    )}
-                  >
-                    {tSidebar("statusCancelledBadge")}
-                  </span>
-                ) : timeLabel ? (
-                  <span
-                    className={cn(
-                      "shrink-0 tabular-nums text-[0.71875rem]",
-                      isSelected
-                        ? "font-medium text-muted-foreground"
-                        : "font-normal text-muted-foreground/70"
-                    )}
-                  >
-                    {timeLabel}
-                  </span>
-                ) : null}
-              </span>
+              ) : isCancelled ? (
+                <span
+                  className={cn(
+                    "relative inline-flex shrink-0 items-center justify-center",
+                    "h-[0.9375rem] rounded-[0.3125rem] px-[0.25rem]",
+                    "text-[0.625rem] font-semibold leading-none tracking-[0.01875rem]",
+                    "bg-destructive/20 text-destructive"
+                  )}
+                >
+                  {tSidebar("statusCancelledBadge")}
+                </span>
+              ) : timeLabel ? (
+                <span
+                  className={cn(
+                    "relative shrink-0 tabular-nums",
+                    "text-[0.71875rem]",
+                    isSelected
+                      ? "font-medium text-muted-foreground"
+                      : "font-normal text-muted-foreground/70"
+                  )}
+                >
+                  {timeLabel}
+                </span>
+              ) : null}
             </button>
           </div>
         </ContextMenuTrigger>

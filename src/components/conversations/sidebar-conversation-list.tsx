@@ -542,7 +542,6 @@ export function SidebarConversationList({
         path: string
         color: string
         defaultAgentType: AgentType | null
-        parentId: number | null
       }
     >()
     for (const f of allFolders)
@@ -551,7 +550,6 @@ export function SidebarConversationList({
         path: f.path,
         color: f.color,
         defaultAgentType: f.default_agent_type,
-        parentId: f.parent_id,
       })
     return map
   }, [allFolders])
@@ -1515,9 +1513,6 @@ export function SidebarConversationList({
           selectedConversation?.id === conv.id
         }
         isOpenInTab={openTabKeys.has(`${conv.agent_type}:${conv.id}`)}
-        isWorktreeBranch={
-          (folderIndex.get(conv.folder_id)?.parentId ?? null) != null
-        }
         timeLabel={formatRelative(
           sortMode === "updated" ? conv.updated_at : conv.created_at,
           now
@@ -1625,10 +1620,7 @@ export function SidebarConversationList({
                     ref={virtualizerRef}
                     scrollRef={viewportRef}
                     data={rows}
-                    // Initial estimate only — virtua measures real heights after
-                    // mount. Conversation rows are now two lines (~44px); folder
-                    // headers/empty hints are measured individually.
-                    itemSize={44}
+                    itemSize={32}
                     bufferSize={400}
                     onScroll={handleVirtuaScroll}
                   >
