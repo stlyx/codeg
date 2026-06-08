@@ -17,9 +17,10 @@
 
 import { memo, useState } from "react"
 import { useTranslations } from "next-intl"
-import { BotIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
+import { BotIcon, ChevronDownIcon } from "lucide-react"
 
 import { AgentIcon } from "@/components/agent-icon"
+import { CollapsedOverlayChip } from "@/components/chat/collapsed-overlay-chip"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { StatusBadge } from "@/components/message/delegation-status-badge"
@@ -63,22 +64,13 @@ export const SubAgentOverlay = memo(function SubAgentOverlay({
 
   if (!isExpanded) {
     return (
-      <div className="pointer-events-none flex">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="cursor-pointer pointer-events-auto shadow-md bg-secondary/70 hover:bg-secondary"
-          aria-label={t("expandAria")}
-          onClick={() =>
-            setCollapsedByKey((prev) => ({ ...prev, [stateKey]: false }))
-          }
-        >
-          <BotIcon className="h-4 w-4" />
-          {t("collapsedSummary", { count })}
-          <ChevronUpIcon className="h-4 w-4" />
-        </Button>
-      </div>
+      <CollapsedOverlayChip
+        icon={<BotIcon className="size-4" />}
+        summary={t("collapsedSummary", { count })}
+        onClick={() =>
+          setCollapsedByKey((prev) => ({ ...prev, [stateKey]: false }))
+        }
+      />
     )
   }
 

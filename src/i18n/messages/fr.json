@@ -1817,8 +1817,7 @@
       "subAgentOverlay": {
         "title": "Sous-agents",
         "collapsedSummary": "Sous-agents {count}",
-        "collapseAria": "Réduire les sous-agents",
-        "expandAria": "Développer les sous-agents"
+        "collapseAria": "Réduire les sous-agents"
       },
       "agentPlanOverlay": {
         "title": "Plan de l'agent",

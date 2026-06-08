@@ -2,6 +2,7 @@
 
 import { memo, useMemo, useState } from "react"
 import { useTranslations } from "next-intl"
+import { CollapsedOverlayChip } from "@/components/chat/collapsed-overlay-chip"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import type { LiveMessage } from "@/contexts/acp-connections-context"
@@ -10,7 +11,6 @@ import { cn } from "@/lib/utils"
 import {
   CheckCircle2Icon,
   ChevronDownIcon,
-  ChevronUpIcon,
   CircleDashedIcon,
   ListTodoIcon,
   Loader2Icon,
@@ -181,31 +181,23 @@ export const AgentPlanOverlay = memo(function AgentPlanOverlay({
   }
 
   if (!isExpanded) {
+    // Positioning (absolute right-8 top-4 z-20) is owned by the shared
+    // overlay-stack container in MessageListView so this panel stacks with the
+    // sub-agent overlay; the chip only declares layout + pointer behavior.
     return (
-      // Positioning (absolute right-8 top-4 z-20) is owned by the shared
-      // overlay-stack container in MessageListView so this panel stacks with
-      // the sub-agent overlay; here we only declare layout + pointer behavior.
-      <div className="pointer-events-none flex">
-        <Button
-          type="button"
-          variant="secondary"
-          size="sm"
-          className="cursor-pointer pointer-events-auto shadow-md bg-secondary/70 hover:bg-secondary"
-          onClick={() =>
-            setCollapsedByPlanKey((prev) => ({
-              ...prev,
-              [currentPlanStateKey]: false,
-            }))
-          }
-        >
-          <ListTodoIcon className="h-4 w-4" />
-          {t("collapsedSummary", {
-            completed: completedCount,
-            total: resolvedEntries.length,
-          })}
-          <ChevronUpIcon className="h-4 w-4" />
-        </Button>
-      </div>
+      <CollapsedOverlayChip
+        icon={<ListTodoIcon className="size-4" />}
+        summary={t("collapsedSummary", {
+          completed: completedCount,
+          total: resolvedEntries.length,
+        })}
+        onClick={() =>
+          setCollapsedByPlanKey((prev) => ({
+            ...prev,
+            [currentPlanStateKey]: false,
+          }))
+        }
+      />
     )
   }
 

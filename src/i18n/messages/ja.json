@@ -1817,8 +1817,7 @@
       "subAgentOverlay": {
         "title": "サブエージェント",
         "collapsedSummary": "サブエージェント {count}",
-        "collapseAria": "サブエージェントを折りたたむ",
-        "expandAria": "サブエージェントを展開"
+        "collapseAria": "サブエージェントを折りたたむ"
       },
       "agentPlanOverlay": {
         "title": "エージェントプラン",
