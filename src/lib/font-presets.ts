@@ -9,8 +9,8 @@
  *   形如 "Inter Variable"），声明惰性、被选中/预览时才下载 woff2。
  * - "custom"：不在列表里，是一个 sentinel id，由 resolveFontStack 用用户输入的族名拼栈。
  *
- * 真实族名同时用于 CSS 变量（--font-sans / --font-mono）与 Monaco/xterm 的
- * fontFamily 字符串选项，三处共享同一份 stack。
+ * 真实族名既可用于界面字体的 CSS 变量 --font-sans，也可直接作为 Monaco/xterm
+ * 的 fontFamily 字符串选项，各处共享同一份 stack。
  */
 
 export type FontCategory = "sans" | "mono"
@@ -98,10 +98,11 @@ export const MONO_FONTS: readonly FontDef[] = FONTS.filter(
 )
 
 /**
- * 默认沿用升级前观感：界面 = JetBrains Mono（现状），编辑器/终端 = 系统等宽
- * （Monaco 默认即系统等宽，终端旧值 Menlo 栈 ≈ 系统等宽）。
+ * 默认：界面 = 系统 UI 字体（原生观感，会话消息区也跟随它），
+ * 编辑器/终端 = 系统等宽字体。
+ * 编辑器字体只作用于代码编辑器（Monaco），不影响界面与消息区。
  */
-export const DEFAULT_UI_FONT_ID = "jetbrains-mono"
+export const DEFAULT_UI_FONT_ID = "system-ui"
 export const DEFAULT_EDITOR_FONT_ID = "system-mono"
 export const DEFAULT_TERMINAL_FONT_ID = "system-mono"
 

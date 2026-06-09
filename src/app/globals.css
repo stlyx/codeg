@@ -11,12 +11,11 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* 默认界面字体 = JetBrains Mono（升级前观感），运行时由 AppearanceProvider 覆盖 */
-  --font-sans: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo,
-    Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  /* 默认等宽字体 = 系统等宽（等同此前 font-mono 回退），运行时由编辑器字体覆盖 */
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  /* 默认界面字体 = 系统 UI 字体，运行时由 AppearanceProvider 覆盖 --font-sans。
+     会话消息区等普通文本均跟随 --font-sans；--font-mono 不在此自定义，
+     由 Tailwind 默认等宽栈兜底（与代码编辑器字体相互独立）。 */
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
 
   font-family: var(--font-sans);
   font-size: 16px;
@@ -957,7 +956,6 @@
 
 @theme inline {
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-mono);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);

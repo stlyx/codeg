@@ -2831,7 +2831,7 @@
     "title": "Comentarios en vivo",
     "description": "Envía notas y correcciones a un agente mientras trabaja. Cuando está activado, el agente obtiene una herramienta para consultar comentarios en vivo y las conversaciones muestran una entrada de notas. Consejo: el agente normalmente solo consulta los comentarios cuando lo mencionas en tu mensaje — por ejemplo, añade \"revisa mis comentarios en vivo periódicamente mientras trabajas\".",
     "enable": "Activar comentarios en vivo",
-    "enableHint": "Inyecta una herramienta para consultar comentarios en los agentes iniciados después de activarlo. Desactivado por defecto.",
+    "enableHint": "Inyecta una herramienta para consultar comentarios en los agentes iniciados después de activarlo.",
     "save": "Guardar",
     "saving": "Guardando…",
     "saved": "Ajustes de comentarios guardados",
@@ -2857,7 +2857,7 @@
   },
   "AskQuestionSettings": {
     "title": "Preguntar al usuario",
-    "description": "Permite que los agentes se detengan y te hagan una pregunta de opción múltiple que aparece encima del cuadro de entrada de la conversación. El agente espera hasta que respondas (u omitas). Activado por defecto.",
+    "description": "Permite que los agentes se detengan y te hagan una pregunta de opción múltiple que aparece encima del cuadro de entrada de la conversación. El agente espera hasta que respondas (u omitas).",
     "enable": "Activar preguntas al usuario",
     "enableHint": "Añade la herramienta ask_user_question a los agentes iniciados después de activarlo.",
     "save": "Guardar",

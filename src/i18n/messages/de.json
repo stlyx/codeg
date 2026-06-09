@@ -2831,7 +2831,7 @@
     "title": "Live-Feedback",
     "description": "Sende dem Agenten Hinweise und Korrekturen, während er arbeitet. Wenn aktiviert, erhält der Agent ein Werkzeug zum Abrufen von Live-Feedback und Unterhaltungen zeigen eine Notizeingabe. Tipp: Der Agent prüft Feedback normalerweise nur, wenn du es in deiner Nachricht erwähnst — füge z. B. «prüfe regelmäßig mein Live-Feedback während der Arbeit» hinzu.",
     "enable": "Live-Feedback aktivieren",
-    "enableHint": "Fügt Agenten, die nach dem Aktivieren gestartet werden, ein Werkzeug zum Abrufen von Feedback hinzu. Standardmäßig aus.",
+    "enableHint": "Fügt Agenten, die nach dem Aktivieren gestartet werden, ein Werkzeug zum Abrufen von Feedback hinzu.",
     "save": "Speichern",
     "saving": "Wird gespeichert…",
     "saved": "Feedback-Einstellungen gespeichert",
@@ -2857,7 +2857,7 @@
   },
   "AskQuestionSettings": {
     "title": "Benutzer fragen",
-    "description": "Erlaubt Agenten, anzuhalten und dir eine Multiple-Choice-Frage zu stellen, die über dem Eingabefeld der Unterhaltung erscheint. Der Agent wartet, bis du antwortest (oder überspringst). Standardmäßig aktiviert.",
+    "description": "Erlaubt Agenten, anzuhalten und dir eine Multiple-Choice-Frage zu stellen, die über dem Eingabefeld der Unterhaltung erscheint. Der Agent wartet, bis du antwortest (oder überspringst).",
     "enable": "Benutzerfrage aktivieren",
     "enableHint": "Fügt Agenten, die nach dem Aktivieren gestartet werden, das ask_user_question-Tool hinzu.",
     "save": "Speichern",

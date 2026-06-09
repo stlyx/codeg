@@ -2831,7 +2831,7 @@
     "title": "Retour en direct",
     "description": "Envoyez des notes et corrections à un agent pendant qu'il travaille. Une fois activé, l'agent dispose d'un outil pour consulter les retours en direct et les conversations affichent une entrée de notes. Astuce : l'agent ne consulte généralement les retours que lorsque vous le mentionnez dans votre message — par exemple, ajoutez « vérifie régulièrement mes retours en direct pendant le travail ».",
     "enable": "Activer le retour en direct",
-    "enableHint": "Ajoute un outil de consultation des retours aux agents démarrés après l'activation. Désactivé par défaut.",
+    "enableHint": "Ajoute un outil de consultation des retours aux agents démarrés après l'activation.",
     "save": "Enregistrer",
     "saving": "Enregistrement…",
     "saved": "Paramètres de retour enregistrés",
@@ -2857,7 +2857,7 @@
   },
   "AskQuestionSettings": {
     "title": "Poser une question à l'utilisateur",
-    "description": "Permet aux agents de s'interrompre et de vous poser une question à choix multiples affichée au-dessus de la zone de saisie de la conversation. L'agent attend votre réponse (ou que vous ignoriez). Activé par défaut.",
+    "description": "Permet aux agents de s'interrompre et de vous poser une question à choix multiples affichée au-dessus de la zone de saisie de la conversation. L'agent attend votre réponse (ou que vous ignoriez).",
     "enable": "Activer les questions à l'utilisateur",
     "enableHint": "Ajoute l'outil ask_user_question aux agents démarrés après l'activation.",
     "save": "Enregistrer",

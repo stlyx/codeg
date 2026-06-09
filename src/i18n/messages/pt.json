@@ -2831,7 +2831,7 @@
     "title": "Feedback ao vivo",
     "description": "Envie notas e correções a um agente enquanto ele trabalha. Quando ativado, o agente ganha uma ferramenta para verificar feedback ao vivo e as conversas mostram uma entrada de notas. Dica: o agente normalmente só verifica o feedback quando você menciona isso na mensagem — por exemplo, adicione \"verifique meu feedback ao vivo regularmente enquanto trabalha\".",
     "enable": "Ativar feedback ao vivo",
-    "enableHint": "Injeta uma ferramenta de verificação de feedback nos agentes iniciados após a ativação. Desativado por padrão.",
+    "enableHint": "Injeta uma ferramenta de verificação de feedback nos agentes iniciados após a ativação.",
     "save": "Salvar",
     "saving": "Salvando…",
     "saved": "Configurações de feedback salvas",
@@ -2857,7 +2857,7 @@
   },
   "AskQuestionSettings": {
     "title": "Perguntar ao usuário",
-    "description": "Permite que os agentes pausem e façam uma pergunta de múltipla escolha que aparece acima da caixa de entrada da conversa. O agente aguarda até você responder (ou pular). Ativado por padrão.",
+    "description": "Permite que os agentes pausem e façam uma pergunta de múltipla escolha que aparece acima da caixa de entrada da conversa. O agente aguarda até você responder (ou pular).",
     "enable": "Ativar perguntas ao usuário",
     "enableHint": "Adiciona a ferramenta ask_user_question aos agentes iniciados após a ativação.",
     "save": "Salvar",

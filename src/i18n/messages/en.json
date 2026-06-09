@@ -2831,7 +2831,7 @@
     "title": "Live Feedback",
     "description": "Send notes and corrections to an agent while it's working. When enabled, the agent gets a tool to check for your mid-task feedback, and conversations show a note input. Tip: agents typically only check for feedback when you mention it in your prompt — for example, add \"check my live feedback regularly\" to your message so the agent knows to look.",
     "enable": "Enable live feedback",
-    "enableHint": "Adds a check-for-feedback tool to agents started after this is turned on. Off by default.",
+    "enableHint": "Adds a check-for-feedback tool to agents started after this is turned on.",
     "save": "Save",
     "saving": "Saving…",
     "saved": "Feedback settings saved",
@@ -2857,7 +2857,7 @@
   },
   "AskQuestionSettings": {
     "title": "Ask user question",
-    "description": "Let agents pause and ask you a multiple-choice question that appears above the conversation input box. The agent waits until you answer (or skip). On by default.",
+    "description": "Let agents pause and ask you a multiple-choice question that appears above the conversation input box. The agent waits until you answer (or skip).",
     "enable": "Enable ask user question",
     "enableHint": "Adds the ask_user_question tool to agents started after this is turned on.",
     "save": "Save",
