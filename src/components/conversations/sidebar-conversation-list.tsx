@@ -22,8 +22,9 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  FolderGit2,
   FolderOpen,
-  GitBranch,
+  FolderOpenDot,
   ListChecks,
   Loader2,
   MoreHorizontal,
@@ -364,7 +365,7 @@ const FolderHeader = memo(function FolderHeader({
               aria-label={t("moreOptions")}
               aria-haspopup="menu"
               className={cn(
-                "flex h-7 w-7 shrink-0 items-center justify-center",
+                "flex h-6 w-6 shrink-0 items-center justify-end",
                 // Shares the card action-icon palette: default /90 is the lightest
                 // muted shade clearing 3:1 non-text contrast (incl. on touch, where
                 // this stays visible); hover deepens to full foreground.
@@ -386,8 +387,14 @@ const FolderHeader = memo(function FolderHeader({
               className={cn(
                 // Mirrors the ⋯ button's action-icon palette and hover-reveal so
                 // the two read as one trailing control cluster. As the rightmost
-                // control it carries the small right-edge margin.
-                "mr-[0.125rem] flex h-7 w-7 shrink-0 items-center justify-center",
+                // control it carries the right-edge margin that lines this cluster
+                // up with the other sidebar affordances: 0.375rem + the list's
+                // px-1.5 (0.375rem) = a uniform 0.75rem inset from the border,
+                // matching the section-header actions and conversation-card badges.
+                // h-6 (not h-7) keeps every action-icon centre on the same axis, and
+                // justify-end flushes the glyph to that 0.75rem edge so the visible
+                // icon — not the transparent button box — lines up with the badges.
+                "mr-[0.375rem] flex h-6 w-6 shrink-0 items-center justify-end",
                 "rounded-[0.375rem] cursor-pointer outline-none text-muted-foreground/90",
                 "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100",
                 "transition-[opacity,color] duration-150 hover:text-sidebar-foreground"
@@ -1628,6 +1635,11 @@ export function SidebarConversationList({
     }
   }, [openFolder])
 
+  // Stable trigger for the Clone Repository dialog, passed to the memoized
+  // Folders section header. Empty deps (setCloneOpen is a stable setter) so the
+  // header doesn't re-render on every parent render.
+  const handleOpenCloneDialog = useCallback(() => setCloneOpen(true), [])
+
   const handleBrowserSelect = useCallback(
     (path: string) => {
       openFolder(path).catch((err) => {
@@ -1722,6 +1734,15 @@ export function SidebarConversationList({
           // entry point, reachable even when empty). `openChatModeTab` is a stable
           // context callback, so the memo holds.
           onNewChat={row.section === "chats" ? openChatModeTab : undefined}
+          // The folders section gets two right-edge hover actions mirroring the
+          // top-of-page NewFolderDropdown: Open Folder and Clone Repository.
+          // Both handlers are stable, so the memo holds.
+          onOpenFolder={
+            row.section === "folders" ? handleOpenFolderAction : undefined
+          }
+          onCloneRepository={
+            row.section === "folders" ? handleOpenCloneDialog : undefined
+          }
           // Every section header carries a top gap: it separates "Folders" from
           // the "Pinned" section above it, and — now that a fixed New chat /
           // Search region sits above the scrolled list — gives the first section
@@ -1832,7 +1853,7 @@ export function SidebarConversationList({
             className="w-full max-w-[14rem] justify-start"
             onClick={handleOpenFolderAction}
           >
-            <FolderOpen className="h-3.5 w-3.5 mr-1.5" />
+            <FolderOpenDot className="h-3.5 w-3.5 mr-1.5" />
             {tFolderDropdown("openFolder")}
           </Button>
           <Button
@@ -1841,7 +1862,7 @@ export function SidebarConversationList({
             className="w-full max-w-[14rem] justify-start"
             onClick={() => setCloneOpen(true)}
           >
-            <GitBranch className="h-3.5 w-3.5 mr-1.5" />
+            <FolderGit2 className="h-3.5 w-3.5 mr-1.5" />
             {tFolderDropdown("cloneRepository")}
           </Button>
           <Button
@@ -1953,11 +1974,11 @@ export function SidebarConversationList({
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onSelect={handleOpenFolderAction}>
-              <FolderOpen className="h-4 w-4" />
+              <FolderOpenDot className="h-4 w-4" />
               {tFolderDropdown("openFolder")}
             </ContextMenuItem>
             <ContextMenuItem onSelect={() => setCloneOpen(true)}>
-              <GitBranch className="h-4 w-4" />
+              <FolderGit2 className="h-4 w-4" />
               {tFolderDropdown("cloneRepository")}
             </ContextMenuItem>
             <ContextMenuItem onSelect={handleProjectBoot}>
