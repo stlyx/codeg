@@ -188,11 +188,12 @@ impl AgentConnection {
 async fn build_agent(
     agent_type: AgentType,
     runtime_env: &BTreeMap<String, String>,
+    cwd: &Path,
 ) -> Result<AcpAgent, AcpError> {
     let meta = registry::get_agent_meta(agent_type);
     debug_assert_eq!(meta.agent_type, agent_type);
 
-    match meta.distribution {
+    let agent = match meta.distribution {
         AgentDistribution::Npx { cmd, args, env, .. } => {
             let merged_env = merge_agent_env(env, runtime_env);
             let mut parts: Vec<String> = Vec::new();
@@ -443,7 +444,24 @@ async fn build_agent(
                 })
                 .map_err(|e| AcpError::SpawnFailed(e.to_string()))
         }
-    }
+    }?;
+
+    // Run the agent subprocess in the session's working directory rather than
+    // codeg's own process cwd (a desktop app launched from the Dock often
+    // inherits "/"). A coding agent belongs in its project root. This is
+    // required for Hermes, whose local terminal backend force-exports
+    // TERMINAL_CWD = os.getcwd() at import (clobbering any inherited value)
+    // and reports that as the agent's "Current working directory" in its
+    // system prompt — without pinning it would believe it lives in "/". For
+    // agents that already use the ACP session/new cwd this is a harmless
+    // alignment (process cwd == session cwd). Guard on an existing directory
+    // so a not-yet-created working_dir (e.g. a worktree path) can't make the
+    // spawn fail.
+    Ok(if cwd.is_dir() {
+        agent.with_current_dir(cwd)
+    } else {
+        agent
+    })
 }
 
 /// Spawn an ACP agent process and run the connection loop in a background task.
@@ -502,7 +520,13 @@ pub async fn spawn_agent_connection(
         crate::commands::acp::reconcile_hermes_runtime_env(&runtime_env);
     }
 
-    let agent = build_agent(agent_type, &runtime_env).await?;
+    // Resolve the launch cwd from the same `working_dir` (via the same helper)
+    // that run_connection uses for the session/new request, so the process
+    // cwd, the ACP session cwd, and any os.getcwd()-derived agent state all
+    // agree. Computed here because `working_dir` is moved into run_connection
+    // below.
+    let launch_cwd = resolve_working_dir(working_dir.as_deref());
+    let agent = build_agent(agent_type, &runtime_env, &launch_cwd).await?;
 
     // Forward only the codeg git credential helper keys into the terminal
     // runtime — not the agent's API tokens or model provider credentials.
