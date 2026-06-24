@@ -702,11 +702,17 @@
       "configDescription": "CodeBuddy 使用 API Key 進行驗證。中國版還必須將環境設為「中國版（internal）」；iOA 版使用「iOA」；海外版則不設定。",
       "apiKeyLabel": "API Key",
       "apiKeyHint": "將作為此智能體的 CODEBUDDY_API_KEY 儲存。也可以在終端機用 CodeBuddy CLI 登入。",
+      "apiKeyHintSelfHosted": "將作為此智能體的 CODEBUDDY_API_KEY 儲存。請使用你的私有化部署簽發的金鑰。",
       "environmentLabel": "環境",
       "environmentHint": "設定 CODEBUDDY_INTERNET_ENVIRONMENT。中國大陸必須使用「中國版（internal）」；海外版則不設定。",
       "envOverseas": "海外版（預設）",
       "envChina": "中國版（internal）",
       "envIoa": "iOA",
+      "envSelfHosted": "私有化部署",
+      "baseUrlLabel": "私有化部署位址",
+      "baseUrlPlaceholder": "https://codebuddy.your-company.com",
+      "baseUrlHint": "儲存為 CODEBUDDY_BASE_URL，將 CodeBuddy 指向你的私有端點。私有化部署不設定網路環境（CODEBUDDY_INTERNET_ENVIRONMENT）。",
+      "baseUrlInvalid": "請輸入合法的 http(s) 位址。",
       "loginHint": "沒有 API Key？也可以在終端機執行「codebuddy」用騰訊雲帳號登入。"
     },
     "kimiCode": {

@@ -153,6 +153,16 @@ export type ContentBlock =
       output_preview: string | null
       is_error: boolean
       agent_stats?: AgentExecutionStats | null
+      /**
+       * Images returned in a tool result (e.g. Claude Code's `Read` of a
+       * PNG/JPEG, or a multi-page PDF read returning one image per page).
+       * Mirror of Rust `ContentBlock::ToolResult.images`. The adapter renders
+       * these in-position as `generated-image` cards so the historical (JSONL
+       * replay) path matches the live ACP stream — which surfaces the same
+       * bytes via `ToolCallInfo.images` and an `image_generation` block.
+       * Absent/empty for the common text-only tool result.
+       */
+      images?: ImageData[] | null
     }
   | { type: "thinking"; text: string }
   /**

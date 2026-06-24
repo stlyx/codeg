@@ -702,11 +702,17 @@
       "configDescription": "CodeBuddy 使用 API Key 进行认证。中国版还必须将环境设为“中国版（internal）”；iOA 版使用“iOA”；海外版则不设置。",
       "apiKeyLabel": "API Key",
       "apiKeyHint": "将作为该智能体的 CODEBUDDY_API_KEY 保存。也可以在终端用 CodeBuddy CLI 登录。",
+      "apiKeyHintSelfHosted": "将作为该智能体的 CODEBUDDY_API_KEY 保存。请使用你的私有化部署签发的密钥。",
       "environmentLabel": "环境",
       "environmentHint": "设置 CODEBUDDY_INTERNET_ENVIRONMENT。中国大陆必须使用“中国版（internal）”；海外版则不设置。",
       "envOverseas": "海外版（默认）",
       "envChina": "中国版（internal）",
       "envIoa": "iOA",
+      "envSelfHosted": "私有化部署",
+      "baseUrlLabel": "私有化部署地址",
+      "baseUrlPlaceholder": "https://codebuddy.your-company.com",
+      "baseUrlHint": "保存为 CODEBUDDY_BASE_URL，将 CodeBuddy 指向你的私有端点。私有化部署不设置网络环境（CODEBUDDY_INTERNET_ENVIRONMENT）。",
+      "baseUrlInvalid": "请输入合法的 http(s) 地址。",
       "loginHint": "没有 API Key？也可以在终端运行 “codebuddy” 用腾讯云账号登录。"
     },
     "kimiCode": {

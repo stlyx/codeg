@@ -702,11 +702,17 @@
       "configDescription": "يصادق CodeBuddy باستخدام مفتاح API. تتطلب إصدارات الصين أيضًا ضبط البيئة على «الصين (internal)»؛ وتستخدم إصدارات iOA «iOA». أما الإصدار الخارجي فيتركها غير مضبوطة.",
       "apiKeyLabel": "مفتاح API",
       "apiKeyHint": "يُحفظ باسم CODEBUDDY_API_KEY لهذا الوكيل. بدلاً من ذلك، يمكنك تسجيل الدخول عبر واجهة CodeBuddy في الطرفية.",
+      "apiKeyHintSelfHosted": "يُحفظ باسم CODEBUDDY_API_KEY لهذا الوكيل. استخدم المفتاح الصادر عن نشرك الخاص.",
       "environmentLabel": "البيئة",
       "environmentHint": "يضبط CODEBUDDY_INTERNET_ENVIRONMENT. يجب أن تستخدم الصين «الصين (internal)»؛ أما الإصدار الخارجي فيتركها غير مضبوطة.",
       "envOverseas": "الخارجي (افتراضي)",
       "envChina": "الصين (internal)",
       "envIoa": "iOA",
+      "envSelfHosted": "استضافة ذاتية (نشر خاص)",
+      "baseUrlLabel": "عنوان URL للنشر",
+      "baseUrlPlaceholder": "https://codebuddy.your-company.com",
+      "baseUrlHint": "يُحفظ باسم CODEBUDDY_BASE_URL ويوجّه CodeBuddy إلى نقطة النهاية الخاصة بك. في الاستضافة الذاتية يبقى إعداد الشبكة (CODEBUDDY_INTERNET_ENVIRONMENT) غير مضبوط.",
+      "baseUrlInvalid": "أدخل عنوان URL صالحًا بصيغة http(s).",
       "loginHint": "لا تملك مفتاح API؟ شغّل «codebuddy» في الطرفية لتسجيل الدخول بحساب Tencent بدلاً من ذلك."
     },
     "kimiCode": {

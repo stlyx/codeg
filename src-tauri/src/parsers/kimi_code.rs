@@ -432,6 +432,10 @@ fn parse_wire(path: &Path) -> WireParse {
                                     .and_then(Value::as_bool)
                                     .unwrap_or(false),
                                 agent_stats: None,
+                                // Kimi tool results are text/JSON today; image
+                                // capture (cf. main's tool-result image support)
+                                // is a follow-up that needs a real image sample.
+                                images: Vec::new(),
                             },
                             ts,
                         ));

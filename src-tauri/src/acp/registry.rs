@@ -24,7 +24,7 @@ pub enum AgentDistribution {
     /// Used for ACP agents distributed as Python packages (e.g. Hermes).
     Uvx {
         version: &'static str,
-        /// The `uvx --from` package spec, e.g. "hermes-agent[acp,mcp]==0.16.0".
+        /// The `uvx --from` package spec, e.g. "hermes-agent[acp,mcp]==0.17.0".
         package: &'static str,
         /// The console-script entry point to run, e.g. "hermes-acp".
         cmd: &'static str,
@@ -275,13 +275,13 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
             name: "Hermes Agent",
             description: "Nous Research's self-improving agent (ACP via uvx)",
             distribution: AgentDistribution::Uvx {
-                version: "0.16.0",
-                package: "hermes-agent[acp,mcp]==0.16.0",
+                version: "0.17.0",
+                package: "hermes-agent[acp,mcp]==0.17.0",
                 cmd: "hermes-acp",
                 args: &[],
                 env: &[],
                 uv_required: Some("0.5.0"),
-                // hermes-agent 0.16.0 is `requires-python = ">=3.11,<3.14"`, and
+                // hermes-agent 0.17.0 is `requires-python = ">=3.11,<3.14"`, and
                 // its win32 dep `pywinpty` (>=2.0.0,<3) has no Python 3.14 wheel
                 // (the 2.0.15 source build fails against PyO3's 3.13 ceiling).
                 // Without this pin uvx grabs the machine's default interpreter
@@ -441,10 +441,10 @@ mod tests {
         assert_binary_version(AgentType::OpenCode, "1.17.9", "/releases/download/v1.17.9/");
         assert_uvx_version(
             AgentType::Hermes,
-            "0.16.0",
-            "hermes-agent[acp,mcp]==0.16.0",
+            "0.17.0",
+            "hermes-agent[acp,mcp]==0.17.0",
             Some("0.5.0"),
-            // hermes-agent 0.16.0 is requires-python `<3.14`; uvx must pin an
+            // hermes-agent 0.17.0 is requires-python `<3.14`; uvx must pin an
             // interpreter it (and its win32 `pywinpty` dep) supports.
             Some("3.13"),
         );

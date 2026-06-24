@@ -702,11 +702,17 @@
       "configDescription": "CodeBuddy は API キーで認証します。中国版では環境を「中国版（internal）」に設定する必要があります。iOA 版は「iOA」を使用し、海外版は未設定のままにします。",
       "apiKeyLabel": "API キー",
       "apiKeyHint": "このエージェントの CODEBUDDY_API_KEY として保存されます。または、ターミナルで CodeBuddy CLI からサインインすることもできます。",
+      "apiKeyHintSelfHosted": "このエージェントの CODEBUDDY_API_KEY として保存されます。プライベート展開で発行されたキーを使用してください。",
       "environmentLabel": "環境",
       "environmentHint": "CODEBUDDY_INTERNET_ENVIRONMENT を設定します。中国本土では「中国版（internal）」を使用する必要があります。海外版は未設定のままにします。",
       "envOverseas": "海外版（デフォルト）",
       "envChina": "中国版（internal）",
       "envIoa": "iOA",
+      "envSelfHosted": "プライベート展開（セルフホスト）",
+      "baseUrlLabel": "デプロイ URL",
+      "baseUrlPlaceholder": "https://codebuddy.your-company.com",
+      "baseUrlHint": "CODEBUDDY_BASE_URL として保存され、CodeBuddy をプライベートエンドポイントに向けます。セルフホストではネットワーク環境（CODEBUDDY_INTERNET_ENVIRONMENT）は設定しません。",
+      "baseUrlInvalid": "有効な http(s) URL を入力してください。",
       "loginHint": "API キーがない場合は、ターミナルで「codebuddy」を実行して Tencent アカウントでサインインすることもできます。"
     },
     "kimiCode": {

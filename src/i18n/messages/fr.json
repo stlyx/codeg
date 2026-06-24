@@ -702,11 +702,17 @@
       "configDescription": "CodeBuddy s'authentifie avec une clé API. Les versions pour la Chine continentale nécessitent aussi de définir l'environnement sur « Chine (internal) » ; les versions iOA utilisent « iOA ». La version internationale la laisse non définie.",
       "apiKeyLabel": "Clé API",
       "apiKeyHint": "Enregistré en tant que CODEBUDDY_API_KEY pour cet agent. Vous pouvez aussi vous connecter avec la CLI CodeBuddy dans un terminal.",
+      "apiKeyHintSelfHosted": "Enregistré en tant que CODEBUDDY_API_KEY pour cet agent. Utilisez la clé émise par votre déploiement privé.",
       "environmentLabel": "Environnement",
       "environmentHint": "Définit CODEBUDDY_INTERNET_ENVIRONMENT. La Chine continentale doit utiliser « Chine (internal) » ; la version internationale la laisse non définie.",
       "envOverseas": "International (par défaut)",
       "envChina": "Chine (internal)",
       "envIoa": "iOA",
+      "envSelfHosted": "Auto-hébergé (déploiement privé)",
+      "baseUrlLabel": "URL de déploiement",
+      "baseUrlPlaceholder": "https://codebuddy.your-company.com",
+      "baseUrlHint": "Enregistré comme CODEBUDDY_BASE_URL et dirige CodeBuddy vers votre point de terminaison privé. En auto-hébergement, l’environnement réseau (CODEBUDDY_INTERNET_ENVIRONMENT) reste non défini.",
+      "baseUrlInvalid": "Saisissez une URL http(s) valide.",
       "loginHint": "Pas de clé API ? Exécutez « codebuddy » dans un terminal pour vous connecter avec votre compte Tencent."
     },
     "kimiCode": {

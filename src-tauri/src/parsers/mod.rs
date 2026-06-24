@@ -161,6 +161,28 @@ pub fn truncate_str(s: &str, max_len: usize) -> String {
     }
 }
 
+/// True when `id` is safe to embed as a single filename component beneath a
+/// session's `subagents/` directory (Claude Code's and CodeBuddy's sub-agent
+/// transcript layout). The id is read straight from transcript JSON
+/// (`agentId` / `subAgent.sessionId`), so a corrupted or hostile transcript
+/// could otherwise smuggle a path that escapes the directory once it is joined
+/// and a file is opened.
+///
+/// Rejects: empty, a path separator (`/` or `\`), a parent ref (`..`), a colon
+/// (Windows drive prefix `C:` / NTFS alternate-data-stream), or a NUL. The
+/// checks are conservative and platform-independent — we reject `:` and `\`
+/// even on Unix (where they are legal filename chars) so the same id can never
+/// escape if the transcript is later read on Windows, where `Path::join("C:x")`
+/// silently replaces the whole base path.
+pub fn is_safe_subagent_id(id: &str) -> bool {
+    !id.is_empty()
+        && !id.contains('/')
+        && !id.contains('\\')
+        && !id.contains("..")
+        && !id.contains(':')
+        && !id.contains('\0')
+}
+
 /// Punctuation the serializer escapes with a leading backslash inside a
 /// reference label (mirrors `escapeMarkdownText` in `src/lib/reference-text.ts`
 /// and the class in the frontend `unescapeReferenceLabel`).
@@ -989,10 +1011,35 @@ mod tests {
     use chrono::Utc;
 
     use super::{
-        fold_reference_links, infer_context_window_max_tokens, latest_turn_total_usage_tokens,
-        merge_context_window_stats, path_eq_for_matching, title_from_user_text,
+        fold_reference_links, infer_context_window_max_tokens, is_safe_subagent_id,
+        latest_turn_total_usage_tokens, merge_context_window_stats, path_eq_for_matching,
+        title_from_user_text,
     };
     use crate::models::{MessageTurn, SessionStats, TurnRole, TurnUsage};
+
+    #[test]
+    fn safe_subagent_id_accepts_plain_ids_and_rejects_traversal() {
+        // Real CodeBuddy / Claude sub-agent ids are plain tokens.
+        assert!(is_safe_subagent_id("agent-cdd7c1ea"));
+        assert!(is_safe_subagent_id("agent-test01"));
+        // Every escape vector is rejected — including the Windows-only drive
+        // colon that the old `/ \\ ..`-only guard let through.
+        for hostile in [
+            "",
+            "..",
+            "../../etc/passwd",
+            "a/b",
+            "a\\b",
+            "C:evil",
+            "C:\\Windows\\System32",
+            "a\0b",
+        ] {
+            assert!(
+                !is_safe_subagent_id(hostile),
+                "expected rejection for {hostile:?}"
+            );
+        }
+    }
 
     #[test]
     fn fold_reference_links_reduces_links_to_labels() {
