@@ -47,7 +47,8 @@ import { cn } from "@/lib/utils"
  *    container-responsive grid. The card body opens the file in the workspace
  *    tabs (an "open in editor" tooltip on hover); a distinct side button
  *    reveals it in the OS file manager. Open by default — a freshly written
- *    file is usually the thing you want to jump into.
+ *    file is usually the thing you want to jump into. The grid scrolls
+ *    within the same bounded max-height as the changed list.
  *  - "Files changed": modified/removed files as a single-open accordion (only
  *    one diff expanded at a time). Collapsed by default. Each row expands its
  *    diff inline within the SAME bordered card (no double border), and the
@@ -140,7 +141,7 @@ export const ReplyArtifacts = memo(function ReplyArtifacts({
 
           {newFilesOpen && (
             <TooltipProvider delayDuration={300}>
-              <div className="@container border-t border-border p-2">
+              <div className="@container max-h-80 overflow-y-auto border-t border-border p-2">
                 <div className="grid gap-2 @md:grid-cols-2">
                   {addedFiles.map((file) => {
                     const displayPath = toFolderRelativePath(
@@ -257,7 +258,7 @@ export const ReplyArtifacts = memo(function ReplyArtifacts({
           </button>
 
           {changedOpen && (
-            <ul className="max-h-[30rem] space-y-1.5 overflow-y-auto border-t border-border p-2">
+            <ul className="max-h-80 space-y-1.5 overflow-y-auto border-t border-border p-2">
               {changedFiles.map((file) => {
                 const displayPath = toFolderRelativePath(file.path, folderPath)
                 const name = fileNameOf(displayPath)
