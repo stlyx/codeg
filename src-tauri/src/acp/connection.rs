@@ -4062,12 +4062,18 @@ fn serialize_tool_call_content(
 /// `None` when `content` carries no `Diff`, so callers only fall back to it when
 /// the agent supplied no `raw_input` of its own.
 fn synthesize_edit_input_from_diffs(content: &[ToolCallContent]) -> Option<String> {
-    let diffs: Vec<(String, String, String)> = content
+    // Keep `old_text` as `Option`: ACP reports `None` for a newly created file
+    // (`Diff.old_text` semantics). That distinction is the whole point of this
+    // function's fix — collapsing `None` to `""` and emitting an edit shape
+    // makes the frontend build a `--- a/<path>` diff, which `isAddedFileDiff`
+    // does NOT match, so a freshly created file mis-renders as a modification
+    // (the historical apply_patch `*** Add File:` path classifies it correctly).
+    let diffs: Vec<(String, Option<String>, String)> = content
         .iter()
         .filter_map(|item| match item {
             ToolCallContent::Diff(diff) => Some((
                 diff.path.display().to_string(),
-                diff.old_text.clone().unwrap_or_default(),
+                diff.old_text.clone(),
                 diff.new_text.clone(),
             )),
             _ => None,
@@ -4076,7 +4082,21 @@ fn synthesize_edit_input_from_diffs(content: &[ToolCallContent]) -> Option<Strin
 
     match diffs.as_slice() {
         [] => None,
-        [(path, old, new)] => Some(
+        // New file (old_text absent) → write shape. `inferFromInput` classifies
+        // `{file_path, content}` as `write`, whose diff builder emits the
+        // `--- /dev/null` header `isAddedFileDiff` keys on → renders as a new
+        // file, matching the reloaded-from-DB path.
+        [(path, None, new)] => Some(
+            serde_json::json!({
+                "file_path": path,
+                "content": new,
+            })
+            .to_string(),
+        ),
+        // Edit → canonical `{old_string,new_string}` for the frontend's
+        // `generateUnifiedDiff` (a real hunk diff, minimal even for full-file
+        // old/new).
+        [(path, Some(old), new)] => Some(
             serde_json::json!({
                 "file_path": path,
                 "old_string": old,
@@ -4087,14 +4107,41 @@ fn synthesize_edit_input_from_diffs(content: &[ToolCallContent]) -> Option<Strin
         many => {
             let mut changes = serde_json::Map::new();
             for (path, old, new) in many {
-                changes.insert(
-                    path.clone(),
-                    serde_json::json!({ "old_text": old, "new_text": new }),
-                );
+                // Per-entry, mirror the single-diff split: a new file gets a
+                // ready-made creation diff (`buildChunkFromEditChange` returns
+                // it verbatim → `--- /dev/null` → new file); an edit hands
+                // old/new text to the frontend to diff.
+                let entry = match old {
+                    None => serde_json::json!({ "diff": build_new_file_diff(path, new) }),
+                    Some(old) => serde_json::json!({ "old_text": old, "new_text": new }),
+                };
+                changes.insert(path.clone(), entry);
             }
             Some(serde_json::json!({ "changes": changes }).to_string())
         }
     }
+}
+
+/// Build a minimal unified diff for a newly created file: the `--- /dev/null`
+/// header the frontend's `isAddedFileDiff` keys on, then every line of
+/// `new_text` as an addition. Byte-for-byte identical to the frontend `write`
+/// op's diff builder (`session-files.ts`), so a multi-file batch's new-file
+/// entries render exactly like a single-file creation.
+fn build_new_file_diff(path: &str, new_text: &str) -> String {
+    // `split('\n')` (not `lines()`) mirrors the frontend `content.split("\n")`:
+    // it keeps the trailing empty segment from a final newline, so the `+N`
+    // count and the trailing `+` addition line match exactly.
+    let lines: Vec<&str> = new_text.split('\n').collect();
+    let mut out = format!(
+        "--- /dev/null\n+++ b/{path}\n@@ -0,0 +1,{} @@",
+        lines.len()
+    );
+    for line in lines {
+        out.push('\n');
+        out.push('+');
+        out.push_str(line);
+    }
+    out
 }
 
 /// Extract `ContentBlock::Image` payloads from a `ToolCallContent` slice.
@@ -5000,13 +5047,31 @@ mod tests {
     }
 
     #[test]
-    fn synthesize_edit_new_file_has_empty_old_string() {
-        // codex-acp sends old_text=None for new files.
+    fn synthesize_edit_new_file_uses_write_shape() {
+        // codex-acp sends old_text=None for new files. Encode that as a write-
+        // shaped input (`{file_path, content}`) so the frontend classifies it as
+        // a creation (`inferFromInput` → "write" → `--- /dev/null` diff), not a
+        // modification. Edit-shaped keys must be absent, or `inferFromInput`
+        // would route it back to "edit".
         let content = vec![diff_content("/new.rs", None, "fn main() {}\n")];
         let json = synthesize_edit_input_from_diffs(&content).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["old_string"], "");
-        assert_eq!(v["new_string"], "fn main() {}\n");
+        assert_eq!(v["file_path"], "/new.rs");
+        assert_eq!(v["content"], "fn main() {}\n");
+        assert!(v.get("old_string").is_none());
+        assert!(v.get("new_string").is_none());
+    }
+
+    #[test]
+    fn build_new_file_diff_matches_frontend_write_builder() {
+        // Format parity with session-files.ts's `write` diff builder: a
+        // `--- /dev/null` header (so `isAddedFileDiff` fires) then every
+        // `split("\n")` segment — including the trailing empty one — as a `+`
+        // line, with `+1,N` counting those segments.
+        assert_eq!(
+            build_new_file_diff("src/x.rs", "a\nb\n"),
+            "--- /dev/null\n+++ b/src/x.rs\n@@ -0,0 +1,3 @@\n+a\n+b\n+"
+        );
     }
 
     #[test]
@@ -5018,10 +5083,20 @@ mod tests {
         let json = synthesize_edit_input_from_diffs(&content).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         // Object map keyed by path — the shape extractEditChangesPayload reads.
+        // /a.rs is an edit → old/new text for the frontend's generateUnifiedDiff.
         assert_eq!(v["changes"]["/a.rs"]["old_text"], "a-old");
         assert_eq!(v["changes"]["/a.rs"]["new_text"], "a-new");
-        assert_eq!(v["changes"]["/b.rs"]["old_text"], "");
-        assert_eq!(v["changes"]["/b.rs"]["new_text"], "b-new");
+        // /b.rs is a new file (old_text=None) → a ready-made creation diff whose
+        // `--- /dev/null` header makes `isAddedFileDiff` classify it as new;
+        // it must NOT carry old_text/new_text (that path builds a `--- a/…`
+        // modification diff instead).
+        let b_diff = v["changes"]["/b.rs"]["diff"]
+            .as_str()
+            .expect("new-file entry carries a prebuilt diff");
+        assert!(b_diff.contains("--- /dev/null"));
+        assert!(b_diff.contains("+b-new"));
+        assert!(v["changes"]["/b.rs"].get("old_text").is_none());
+        assert!(v["changes"]["/b.rs"].get("new_text").is_none());
     }
 
     #[test]
