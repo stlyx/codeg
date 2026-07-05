@@ -109,6 +109,11 @@
       "ligaturesUnavailable": "该字体不含连字",
       "terminalLigaturesHint": "终端连字仅对内置编程字体生效。",
       "preview": "预览"
+    },
+    "welcomePanel": {
+      "sectionTitle": "模式选择区域",
+      "sectionDescription": "新会话页面输入框上方显示的「代码开发 / 日常办公」快捷卡片区域。",
+      "showQuickActions": "在新会话页面显示"
     }
   },
   "SystemSettings": {

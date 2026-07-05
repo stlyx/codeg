@@ -109,6 +109,11 @@
       "ligaturesUnavailable": "Esta fonte não tem ligaduras",
       "terminalLigaturesHint": "As ligaduras do terminal aplicam-se apenas às fontes de programação incluídas.",
       "preview": "Pré-visualização"
+    },
+    "welcomePanel": {
+      "sectionTitle": "Área de seleção de modo",
+      "sectionDescription": "Os cartões de atalho «Desenvolvimento / Escritório» exibidos acima do campo de entrada na página de nova conversa.",
+      "showQuickActions": "Mostrar na página de nova conversa"
     }
   },
   "SystemSettings": {

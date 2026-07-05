@@ -109,6 +109,11 @@
       "ligaturesUnavailable": "This font has no ligatures",
       "terminalLigaturesHint": "Terminal ligatures apply only to bundled coding fonts.",
       "preview": "Preview"
+    },
+    "welcomePanel": {
+      "sectionTitle": "Mode selection area",
+      "sectionDescription": "The Code Development / Office Work shortcut cards shown above the composer on the new conversation page.",
+      "showQuickActions": "Show on the new conversation page"
     }
   },
   "SystemSettings": {

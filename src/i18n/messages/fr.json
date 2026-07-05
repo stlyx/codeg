@@ -109,6 +109,11 @@
       "ligaturesUnavailable": "Cette police n’a pas de ligatures",
       "terminalLigaturesHint": "Les ligatures du terminal ne s’appliquent qu’aux polices de programmation intégrées.",
       "preview": "Aperçu"
+    },
+    "welcomePanel": {
+      "sectionTitle": "Zone de sélection du mode",
+      "sectionDescription": "Les cartes de raccourci « Développement / Bureautique » affichées au-dessus du champ de saisie sur la page de nouvelle conversation.",
+      "showQuickActions": "Afficher sur la page de nouvelle conversation"
     }
   },
   "SystemSettings": {

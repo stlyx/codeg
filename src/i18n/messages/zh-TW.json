@@ -109,6 +109,11 @@
       "ligaturesUnavailable": "此字型不含連字",
       "terminalLigaturesHint": "終端機連字僅對內建程式字型生效。",
       "preview": "預覽"
+    },
+    "welcomePanel": {
+      "sectionTitle": "模式選擇區域",
+      "sectionDescription": "新會話頁面輸入框上方顯示的「程式開發 / 日常辦公」快捷卡片區域。",
+      "showQuickActions": "在新會話頁面顯示"
     }
   },
   "SystemSettings": {

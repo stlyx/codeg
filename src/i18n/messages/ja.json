@@ -109,6 +109,11 @@
       "ligaturesUnavailable": "このフォントには合字がありません",
       "terminalLigaturesHint": "ターミナルの合字は内蔵のコーディングフォントにのみ適用されます。",
       "preview": "プレビュー"
+    },
+    "welcomePanel": {
+      "sectionTitle": "モード選択エリア",
+      "sectionDescription": "新しい会話ページで入力欄の上に表示される「コード開発 / 日常業務」のショートカットカードです。",
+      "showQuickActions": "新しい会話ページに表示する"
     }
   },
   "SystemSettings": {

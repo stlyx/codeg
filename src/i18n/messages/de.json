@@ -109,6 +109,11 @@
       "ligaturesUnavailable": "Diese Schriftart hat keine Ligaturen",
       "terminalLigaturesHint": "Terminal-Ligaturen gelten nur für mitgelieferte Programmierschriftarten.",
       "preview": "Vorschau"
+    },
+    "welcomePanel": {
+      "sectionTitle": "Modusauswahlbereich",
+      "sectionDescription": "Die Shortcut-Karten „Code-Entwicklung / Büroarbeit“ über dem Eingabefeld auf der Seite für eine neue Konversation.",
+      "showQuickActions": "Auf der Seite für neue Konversationen anzeigen"
     }
   },
   "SystemSettings": {
