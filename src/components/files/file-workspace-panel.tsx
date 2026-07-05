@@ -40,21 +40,15 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu"
-import { cjk } from "@streamdown/cjk"
-import { code } from "@streamdown/code"
-import { createMathPlugin } from "@streamdown/math"
-import { mermaid } from "@streamdown/mermaid"
 import { Streamdown } from "streamdown"
 import { readFileBase64 } from "@/lib/api"
 import { normalizeMathDelimiters } from "@/components/ai-elements/message"
+import { useStreamdownPlugins } from "@/components/ai-elements/streamdown-plugins"
 import { defineMonacoThemes, useMonacoThemeSync } from "@/lib/monaco-themes"
 import { useZoomLevel, useEditorFont } from "@/hooks/use-appearance"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
 import "@/lib/monaco-local"
-
-const math = createMathPlugin({ singleDollarTextMath: true })
-const previewPlugins = { cjk, code, math, mermaid }
 
 function resolveRelativePath(base: string, relative: string): string {
   // Strip URL fragment (e.g. #gh-light-mode-only) and query string
@@ -239,6 +233,89 @@ function PreviewImage({
 
   // eslint-disable-next-line @next/next/no-img-element, jsx-a11y/alt-text
   return <img {...props} src={resolvedSrc} />
+}
+
+/**
+ * Markdown document preview. Extracted into its own component so the heavy
+ * Streamdown plugins (shiki / katex / mermaid) load lazily via
+ * `useStreamdownPlugins` only when a document is actually being previewed —
+ * calling the hook here (rather than in `FileWorkspacePanel`, whose Streamdown
+ * sits behind several early returns) keeps it unconditional per the rules of
+ * hooks while still gating engine loads on preview mode.
+ */
+function MarkdownDocumentPreview({
+  content,
+  fileDir,
+  localRefsEnabled,
+  openFilePreview,
+}: {
+  content: string
+  fileDir: string | null
+  localRefsEnabled: boolean
+  openFilePreview: (path: string) => void
+}) {
+  const plugins = useStreamdownPlugins(content)
+  return (
+    <div className="h-full overflow-auto p-6 [&_a_img]:inline">
+      <Streamdown
+        plugins={plugins}
+        components={{
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          img: ({ node, ...imgProps }) => (
+            <PreviewImage
+              {...imgProps}
+              fileDir={localRefsEnabled ? fileDir : null}
+            />
+          ),
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          a: ({ node, href, children, ...aProps }) => {
+            // Protocol-relative "//host/…" is a WEB url — exclude it
+            // from the local branch (^\/\/) so it opens externally
+            // instead of being collapsed into a local file path.
+            // localRefsEnabled is false for UNC docs: never route a
+            // (possibly wrongly-collapsed) local target to the opener.
+            const isRelative =
+              href && !/^[a-z][a-z0-9+.-]*:|^#|^\/\//i.test(href)
+            if (isRelative && href && localRefsEnabled) {
+              return (
+                <a
+                  {...aProps}
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    // After preprocessing (absolute document dir) +
+                    // rehype-harden, local hrefs ARE absolute
+                    // filesystem paths like "/repo/docs/foo.md" —
+                    // open directly; no folder involved.
+                    const target = href
+                      .replace(/[#?].*$/, "")
+                      .replace(/\/\/+/g, "/")
+                    void openFilePreview(target)
+                  }}
+                >
+                  {children}
+                </a>
+              )
+            }
+            return (
+              <a
+                {...aProps}
+                // Pin protocol-relative urls to https: the webview's
+                // own scheme (tauri://) would otherwise hijack them.
+                href={href?.startsWith("//") ? `https:${href}` : href}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {children}
+              </a>
+            )
+          },
+        }}
+      >
+        {content}
+      </Streamdown>
+    </div>
+  )
 }
 
 const AUTO_SAVE_DELAY_MS = 5000
@@ -1858,65 +1935,12 @@ export function FileWorkspacePanel() {
             {t("loading")}
           </div>
         ) : (
-          <div className="h-full overflow-auto p-6 [&_a_img]:inline">
-            <Streamdown
-              plugins={previewPlugins}
-              components={{
-                // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                img: ({ node, ...imgProps }) => (
-                  <PreviewImage
-                    {...imgProps}
-                    fileDir={localRefsEnabled ? fileDir : null}
-                  />
-                ),
-                // eslint-disable-next-line @typescript-eslint/no-unused-vars
-                a: ({ node, href, children, ...aProps }) => {
-                  // Protocol-relative "//host/…" is a WEB url — exclude it
-                  // from the local branch (^\/\/) so it opens externally
-                  // instead of being collapsed into a local file path.
-                  // localRefsEnabled is false for UNC docs: never route a
-                  // (possibly wrongly-collapsed) local target to the opener.
-                  const isRelative =
-                    href && !/^[a-z][a-z0-9+.-]*:|^#|^\/\//i.test(href)
-                  if (isRelative && href && localRefsEnabled) {
-                    return (
-                      <a
-                        {...aProps}
-                        href="#"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          // After preprocessing (absolute document dir) +
-                          // rehype-harden, local hrefs ARE absolute
-                          // filesystem paths like "/repo/docs/foo.md" —
-                          // open directly; no folder involved.
-                          const target = href
-                            .replace(/[#?].*$/, "")
-                            .replace(/\/\/+/g, "/")
-                          void openFilePreview(target)
-                        }}
-                      >
-                        {children}
-                      </a>
-                    )
-                  }
-                  return (
-                    <a
-                      {...aProps}
-                      // Pin protocol-relative urls to https: the webview's
-                      // own scheme (tauri://) would otherwise hijack them.
-                      href={href?.startsWith("//") ? `https:${href}` : href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {children}
-                    </a>
-                  )
-                },
-              }}
-            >
-              {preprocessedContent}
-            </Streamdown>
-          </div>
+          <MarkdownDocumentPreview
+            content={preprocessedContent}
+            fileDir={fileDir}
+            localRefsEnabled={localRefsEnabled}
+            openFilePreview={openFilePreview}
+          />
         )}
       </div>
     )
