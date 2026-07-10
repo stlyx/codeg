@@ -49,6 +49,7 @@
       "web_service": "Service Web",
       "model_providers": "Fournisseurs de Modèles",
       "experts": "Experts",
+      "science": "Science",
       "office_tools": "Outils bureautiques",
       "quick_messages": "Messages rapides",
       "logs": "Journaux d'exécution"
@@ -2159,11 +2160,39 @@
             "morph3d": "Crée une présentation Morph 3D avec des modèles GLB et des mouvements de caméra :\n\n[décris ici ton sujet et le concept visuel en 3D]",
             "academic": "Rédige un article académique dans Word avec les exigences suivantes :\n\n[décris ici ton sujet de recherche, la méthodologie et les principaux résultats]",
             "financial": "Crée un modèle financier dans Excel avec les exigences suivantes :\n\n[décris ici tes états financiers, projections et analyses]",
-            "dashboard": "Crée un tableau de bord de données dans Excel avec les exigences suivantes :\n\n[décris ici ta source de données, les KPI et les graphiques]"
+            "dashboard": "Crée un tableau de bord de données dans Excel avec les exigences suivantes :\n\n[décris ici ta source de données, les KPI et les graphiques]",
+            "scientific-brainstorming": "Aide-moi à imaginer des pistes de recherche : explore les liens interdisciplinaires, questionne les hypothèses et repère les lacunes prometteuses. Le domaine que j'explore : ",
+            "hypothesis-generation": "Aide-moi à transformer ces observations en hypothèses testables, avec des prédictions claires, des mécanismes plausibles et des expériences. Mes observations : ",
+            "experimental-design": "Aide-moi à concevoir une expérience rigoureuse avant de collecter des données : le plan, la randomisation, les contrôles et comment éviter les facteurs de confusion. Ce que je veux étudier : ",
+            "statistical-power": "Aide-moi à déterminer la taille d'échantillon nécessaire : guide-moi dans une analyse de puissance (taille d'effet, alpha, puissance) pour mon plan. Détails : ",
+            "statistical-analysis": "Aide-moi à analyser ces données correctement : choisir le bon test, vérifier les hypothèses, rapporter les tailles d'effet et rédiger. Mes données et ma question : ",
+            "exploratory-data-analysis": "Fais une analyse exploratoire de mon fichier de données : résume sa structure, sa qualité et les motifs notables, puis propose les prochaines étapes. Le fichier est : ",
+            "scientific-visualization": "Aide-moi à créer une figure de qualité publication : mise en page claire, barres d'erreur honnêtes, palette adaptée au daltonisme et mise en forme de revue. Ce que je veux montrer : ",
+            "scientific-critical-thinking": "Aide-moi à évaluer de façon critique cette étude ou affirmation : apprécie la qualité des preuves, repère les biais et facteurs de confusion, et pèse les conclusions. La voici : ",
+            "paper-lookup": "Aide-moi à trouver des articles pertinents et du texte intégral en libre accès dans les bases de données savantes, avec des citations réutilisables. Je cherche : "
           },
+          "paper-lookup": "Recherche d'articles",
+          "paper-lookupDesc": "Rechercher dans 10 API savantes (PubMed, arXiv, OpenAlex, Crossref…) articles, citations et texte intégral en libre accès.",
+          "scientific-critical-thinking": "Pensée critique",
+          "scientific-critical-thinkingDesc": "Évaluer les affirmations scientifiques et la qualité des preuves : repérer biais et facteurs de confusion, appliquer GRADE.",
+          "scientific-visualization": "Visualisation scientifique",
+          "scientific-visualizationDesc": "Figures prêtes à publier : dispositions multipanneaux, annotations de significativité et mise en forme par revue.",
+          "exploratory-data-analysis": "Analyse exploratoire des données",
+          "exploratory-data-analysisDesc": "Exploration automatisée de fichiers de données scientifiques (200+ formats) avec métriques de qualité et rapports.",
+          "statistical-analysis": "Analyse statistique",
+          "statistical-analysisDesc": "Analyse statistique guidée : choix du test, vérification des hypothèses, tailles d'effet et rapport au format APA.",
+          "statistical-power": "Puissance statistique",
+          "statistical-powerDesc": "Analyse de la taille d'échantillon et de la puissance : effectifs nécessaires, effets minimaux détectables, courbes de puissance.",
+          "experimental-design": "Plan d'expérience",
+          "experimental-designDesc": "Concevoir des études rigoureuses avant la collecte : randomisation, blocs, contrôles et plans factoriels/DOE.",
+          "hypothesis-generation": "Génération d'hypothèses",
+          "hypothesis-generationDesc": "Transformer des observations en hypothèses testables avec prédictions, mécanismes et expériences de test.",
+          "scientific-brainstorming": "Brainstorming scientifique",
+          "scientific-brainstormingDesc": "Idéation de recherche ouverte : explorer les liens interdisciplinaires, questionner les hypothèses, repérer les lacunes.",
           "tabs": {
             "office": "Bureautique",
-            "coding": "Développement"
+            "coding": "Développement",
+            "research": "Recherche"
           },
           "coding": {
             "brainstormingDesc": "Explorer intention et besoins avant de coder",
@@ -3000,6 +3029,40 @@
       "disabled": "Expert désactivé pour cet agent",
       "enableFailed": "Échec de l'activation de l'expert",
       "disableFailed": "Échec de la désactivation de l'expert",
+      "openFolderFailed": "Échec de l'ouverture du dossier"
+    }
+  },
+  "ScienceSettings": {
+    "title": "Compétences de recherche scientifique",
+    "description": "Activez des compétences de recherche scientifique sélectionnées pour vos agents de codage IA : génération d'hypothèses, plan d'expérience, statistiques, visualisation, évaluation critique et recherche bibliographique. codeg gère une copie centrale et relie chaque compétence aux agents que vous choisissez.",
+    "loading": "Chargement des compétences scientifiques…",
+    "emptySkills": "Aucune compétence scientifique disponible. Consultez les journaux de l'application.",
+    "searchPlaceholder": "Rechercher des compétences scientifiques par nom, id ou description",
+    "categories": {
+      "ideation": "Idéation",
+      "design": "Plan d'étude",
+      "analysis": "Analyse",
+      "visualization": "Visualisation",
+      "evaluation": "Évaluation",
+      "literature": "Littérature"
+    },
+    "states": {
+      "not_linked": "Non activé",
+      "linked_to_codeg": "Activé",
+      "linked_elsewhere": "Bloqué — un autre lien existe",
+      "blocked_by_real_directory": "Bloqué — une compétence personnalisée occupe ce nom",
+      "broken": "Lien cassé"
+    },
+    "badges": {
+      "userModified": "Modifié par l'utilisateur",
+      "needsKey": "Clé API requise",
+      "needsSetup": "Configuration possible"
+    },
+    "actions": {
+      "openCentralDir": "Ouvrir le dossier central",
+      "refresh": "Actualiser"
+    },
+    "toasts": {
       "openFolderFailed": "Échec de l'ouverture du dossier"
     }
   },

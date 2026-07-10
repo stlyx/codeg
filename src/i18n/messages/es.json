@@ -49,6 +49,7 @@
       "web_service": "Servicio Web",
       "model_providers": "Proveedores de Modelos",
       "experts": "Expertos",
+      "science": "Ciencia",
       "office_tools": "Herramientas de oficina",
       "quick_messages": "Mensajes rápidos",
       "logs": "Registros de ejecución"
@@ -2159,11 +2160,39 @@
             "morph3d": "Crea una presentación Morph 3D con modelos GLB y movimientos de cámara:\n\n[describe aquí tu tema y concepto visual en 3D]",
             "academic": "Escribe un artículo académico en Word con los siguientes requisitos:\n\n[describe aquí tu tema de investigación, metodología y hallazgos clave]",
             "financial": "Crea un modelo financiero en Excel con los siguientes requisitos:\n\n[describe aquí tus estados financieros, proyecciones y análisis]",
-            "dashboard": "Crea un panel de datos en Excel con los siguientes requisitos:\n\n[describe aquí tu fuente de datos, KPIs y gráficos]"
+            "dashboard": "Crea un panel de datos en Excel con los siguientes requisitos:\n\n[describe aquí tu fuente de datos, KPIs y gráficos]",
+            "scientific-brainstorming": "Ayúdame a generar ideas de investigación: explora conexiones interdisciplinares, cuestiona supuestos y detecta vacíos prometedores. El área que exploro: ",
+            "hypothesis-generation": "Ayúdame a convertir estas observaciones en hipótesis comprobables, con predicciones claras, mecanismos plausibles y experimentos para probarlas. Mis observaciones: ",
+            "experimental-design": "Ayúdame a diseñar un experimento riguroso antes de recolectar datos: el diseño, la aleatorización, los controles y cómo evitar la confusión. Lo que quiero estudiar: ",
+            "statistical-power": "Ayúdame a determinar el tamaño muestral que necesito: guíame en un análisis de potencia (tamaño del efecto, alfa, potencia) para mi diseño. Detalles: ",
+            "statistical-analysis": "Ayúdame a analizar estos datos correctamente: elige la prueba adecuada, verifica los supuestos, informa los tamaños de efecto y redáctalo. Mis datos y pregunta: ",
+            "exploratory-data-analysis": "Haz un análisis exploratorio de mi archivo de datos: resume su estructura, calidad y patrones destacados, y sugiere próximos pasos. El archivo es: ",
+            "scientific-visualization": "Ayúdame a crear una figura de calidad de publicación: diseño claro, barras de error honestas, una paleta apta para daltónicos y formato de revista. Lo que quiero mostrar: ",
+            "scientific-critical-thinking": "Ayúdame a evaluar críticamente este estudio o afirmación: valora la calidad de la evidencia, detecta sesgos y confusores, y pondera las conclusiones. Aquí está: ",
+            "paper-lookup": "Ayúdame a encontrar artículos relevantes y texto completo de acceso abierto en bases de datos académicas, con citas que pueda reutilizar. Busco: "
           },
+          "paper-lookup": "Búsqueda de artículos",
+          "paper-lookupDesc": "Busca en 10 API académicas (PubMed, arXiv, OpenAlex, Crossref…) artículos, citas y texto completo de acceso abierto.",
+          "scientific-critical-thinking": "Pensamiento crítico",
+          "scientific-critical-thinkingDesc": "Evalúa afirmaciones científicas y calidad de la evidencia: detecta sesgos y confusores, aplica GRADE y riesgo de sesgo.",
+          "scientific-visualization": "Visualización científica",
+          "scientific-visualizationDesc": "Figuras listas para publicar: diseños multipanel, anotaciones de significancia y formato específico de revista.",
+          "exploratory-data-analysis": "Análisis exploratorio de datos",
+          "exploratory-data-analysisDesc": "Exploración automatizada de archivos de datos científicos en más de 200 formatos con métricas de calidad e informes.",
+          "statistical-analysis": "Análisis estadístico",
+          "statistical-analysisDesc": "Análisis estadístico guiado: selección de pruebas, verificación de supuestos, tamaños de efecto e informe estilo APA.",
+          "statistical-power": "Potencia estadística",
+          "statistical-powerDesc": "Análisis de tamaño muestral y potencia: cuántos sujetos necesitas, efectos mínimos detectables y curvas de potencia.",
+          "experimental-design": "Diseño experimental",
+          "experimental-designDesc": "Diseña estudios rigurosos antes de recolectar datos: aleatorización, bloqueo, controles y diseños factoriales/DOE.",
+          "hypothesis-generation": "Generación de hipótesis",
+          "hypothesis-generationDesc": "Convierte observaciones en hipótesis comprobables con predicciones, mecanismos y experimentos para probarlas.",
+          "scientific-brainstorming": "Lluvia de ideas científica",
+          "scientific-brainstormingDesc": "Ideación abierta de investigación: explora conexiones interdisciplinares, cuestiona supuestos y detecta vacíos.",
           "tabs": {
             "office": "Ofimática",
-            "coding": "Desarrollo de código"
+            "coding": "Desarrollo de código",
+            "research": "Investigación"
           },
           "coding": {
             "brainstormingDesc": "Explora intención y requisitos antes de construir",
@@ -3000,6 +3029,40 @@
       "disabled": "Experto deshabilitado para este agente",
       "enableFailed": "Error al habilitar el experto",
       "disableFailed": "Error al deshabilitar el experto",
+      "openFolderFailed": "Error al abrir la carpeta"
+    }
+  },
+  "ScienceSettings": {
+    "title": "Habilidades de investigación científica",
+    "description": "Habilita habilidades de investigación científica seleccionadas para tus agentes de código con IA: generación de hipótesis, diseño experimental, estadística, visualización, evaluación crítica y búsqueda bibliográfica. codeg gestiona una copia central y enlaza cada habilidad a los agentes que elijas.",
+    "loading": "Cargando habilidades científicas…",
+    "emptySkills": "No hay habilidades científicas disponibles. Revisa los registros de la aplicación.",
+    "searchPlaceholder": "Buscar habilidades científicas por nombre, id o descripción",
+    "categories": {
+      "ideation": "Ideación",
+      "design": "Diseño de estudios",
+      "analysis": "Análisis",
+      "visualization": "Visualización",
+      "evaluation": "Evaluación",
+      "literature": "Literatura"
+    },
+    "states": {
+      "not_linked": "No habilitado",
+      "linked_to_codeg": "Habilitado",
+      "linked_elsewhere": "Bloqueado — existe otro vínculo",
+      "blocked_by_real_directory": "Bloqueado — una habilidad personalizada ocupa este nombre",
+      "broken": "Vínculo roto"
+    },
+    "badges": {
+      "userModified": "Modificado por el usuario",
+      "needsKey": "Requiere clave",
+      "needsSetup": "Puede requerir configuración"
+    },
+    "actions": {
+      "openCentralDir": "Abrir carpeta central",
+      "refresh": "Actualizar"
+    },
+    "toasts": {
       "openFolderFailed": "Error al abrir la carpeta"
     }
   },

@@ -49,6 +49,7 @@
       "web_service": "Serviço Web",
       "model_providers": "Provedores de Modelos",
       "experts": "Especialistas",
+      "science": "Ciência",
       "office_tools": "Ferramentas de escritório",
       "quick_messages": "Mensagens rápidas",
       "logs": "Registros de execução"
@@ -2159,11 +2160,39 @@
             "morph3d": "Crie uma apresentação Morph 3D com modelos GLB e movimentos de câmera:\n\n[descreva aqui seu tema e conceito visual em 3D]",
             "academic": "Escreva um artigo acadêmico no Word com os seguintes requisitos:\n\n[descreva aqui seu tema de pesquisa, metodologia e principais resultados]",
             "financial": "Crie um modelo financeiro no Excel com os seguintes requisitos:\n\n[descreva aqui suas demonstrações financeiras, projeções e análises]",
-            "dashboard": "Crie um painel de dados no Excel com os seguintes requisitos:\n\n[descreva aqui sua fonte de dados, KPIs e gráficos]"
+            "dashboard": "Crie um painel de dados no Excel com os seguintes requisitos:\n\n[descreva aqui sua fonte de dados, KPIs e gráficos]",
+            "scientific-brainstorming": "Ajude-me a fazer um brainstorming de direções de pesquisa: explore conexões interdisciplinares, questione premissas e revele lacunas promissoras. A área que estou explorando: ",
+            "hypothesis-generation": "Ajude-me a transformar estas observações em hipóteses testáveis, com previsões claras, mecanismos plausíveis e experimentos. Minhas observações: ",
+            "experimental-design": "Ajude-me a planejar um experimento rigoroso antes de coletar dados: o delineamento, a aleatorização, os controles e como evitar confundimento. O que quero estudar: ",
+            "statistical-power": "Ajude-me a determinar o tamanho amostral necessário: conduza uma análise de poder (tamanho de efeito, alfa, poder) para o meu delineamento. Detalhes: ",
+            "statistical-analysis": "Ajude-me a analisar estes dados corretamente: escolha o teste certo, verifique os pressupostos, relate os tamanhos de efeito e redija. Meus dados e pergunta: ",
+            "exploratory-data-analysis": "Faça uma análise exploratória do meu arquivo de dados: resuma sua estrutura, qualidade e padrões notáveis e sugira os próximos passos. O arquivo é: ",
+            "scientific-visualization": "Ajude-me a criar uma figura com qualidade de publicação: layout claro, barras de erro honestas, uma paleta segura para daltônicos e formatação de periódico. O que quero mostrar: ",
+            "scientific-critical-thinking": "Ajude-me a avaliar criticamente este estudo ou alegação: avalie a qualidade da evidência, identifique vieses e confundidores e pondere as conclusões. Aqui está: ",
+            "paper-lookup": "Ajude-me a encontrar artigos relevantes e texto completo de acesso aberto em bases de dados acadêmicas, com citações reutilizáveis. Estou procurando: "
           },
+          "paper-lookup": "Busca de artigos",
+          "paper-lookupDesc": "Pesquise em 10 APIs acadêmicas (PubMed, arXiv, OpenAlex, Crossref…) artigos, citações e texto completo de acesso aberto.",
+          "scientific-critical-thinking": "Pensamento crítico",
+          "scientific-critical-thinkingDesc": "Avalie alegações científicas e a qualidade da evidência: identifique vieses e confundidores e aplique GRADE.",
+          "scientific-visualization": "Visualização científica",
+          "scientific-visualizationDesc": "Figuras prontas para publicação: layouts multipainel, anotações de significância e formatação específica de periódico.",
+          "exploratory-data-analysis": "Análise exploratória de dados",
+          "exploratory-data-analysisDesc": "Exploração automatizada de arquivos de dados científicos em mais de 200 formatos com métricas de qualidade e relatórios.",
+          "statistical-analysis": "Análise estatística",
+          "statistical-analysisDesc": "Análise estatística guiada: seleção de testes, verificação de pressupostos, tamanhos de efeito e relato no estilo APA.",
+          "statistical-power": "Poder estatístico",
+          "statistical-powerDesc": "Análise de tamanho amostral e poder: quantos sujeitos são necessários, efeitos mínimos detectáveis e curvas de poder.",
+          "experimental-design": "Delineamento experimental",
+          "experimental-designDesc": "Planeje estudos rigorosos antes de coletar dados: aleatorização, blocagem, controles e delineamentos fatoriais/DOE.",
+          "hypothesis-generation": "Geração de hipóteses",
+          "hypothesis-generationDesc": "Transforme observações em hipóteses testáveis com previsões, mecanismos e experimentos para testá-las.",
+          "scientific-brainstorming": "Brainstorming científico",
+          "scientific-brainstormingDesc": "Ideação aberta de pesquisa: explore conexões interdisciplinares, questione premissas e revele lacunas.",
           "tabs": {
             "office": "Escritório",
-            "coding": "Desenvolvimento"
+            "coding": "Desenvolvimento",
+            "research": "Pesquisa"
           },
           "coding": {
             "brainstormingDesc": "Explore intenção e requisitos antes de construir",
@@ -3000,6 +3029,40 @@
       "disabled": "Especialista desativado para este agente",
       "enableFailed": "Falha ao ativar o especialista",
       "disableFailed": "Falha ao desativar o especialista",
+      "openFolderFailed": "Falha ao abrir a pasta"
+    }
+  },
+  "ScienceSettings": {
+    "title": "Habilidades de pesquisa científica",
+    "description": "Ative habilidades de pesquisa científica selecionadas para seus agentes de código com IA: geração de hipóteses, delineamento experimental, estatística, visualização, avaliação crítica e busca de literatura. O codeg gerencia uma cópia central e vincula cada habilidade aos agentes que você escolher.",
+    "loading": "Carregando habilidades científicas…",
+    "emptySkills": "Nenhuma habilidade científica disponível. Verifique os registros do aplicativo.",
+    "searchPlaceholder": "Pesquisar habilidades científicas por nome, id ou descrição",
+    "categories": {
+      "ideation": "Ideação",
+      "design": "Delineamento",
+      "analysis": "Análise",
+      "visualization": "Visualização",
+      "evaluation": "Avaliação",
+      "literature": "Literatura"
+    },
+    "states": {
+      "not_linked": "Não ativado",
+      "linked_to_codeg": "Ativado",
+      "linked_elsewhere": "Bloqueado — outro vínculo existe",
+      "blocked_by_real_directory": "Bloqueado — uma habilidade personalizada ocupa este nome",
+      "broken": "Vínculo quebrado"
+    },
+    "badges": {
+      "userModified": "Modificado pelo usuário",
+      "needsKey": "Requer chave",
+      "needsSetup": "Pode exigir configuração"
+    },
+    "actions": {
+      "openCentralDir": "Abrir pasta central",
+      "refresh": "Atualizar"
+    },
+    "toasts": {
       "openFolderFailed": "Falha ao abrir a pasta"
     }
   },
