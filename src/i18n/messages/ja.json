@@ -563,6 +563,7 @@
       "uninstalling": "アンインストール中...",
       "saveEnvVars": "環境変数を保存",
       "saving": "保存中...",
+      "saveGrokConfig": "Grok 設定を保存",
       "saveCodexConfig": "Codex設定を保存",
       "saveGeminiConfig": "Gemini設定を保存",
       "saveOpenCodeConfig": "OpenCode設定を保存",
@@ -597,6 +598,26 @@
     "preflight": {
       "count": "事前チェック項目: {count}",
       "notRun": "チェックはまだ実行されていません。"
+    },
+    "grok": {
+      "configDescription": "ここで Grok を設定します。下のコントロール（権限モード・推論レベル）は ~/.grok/config.toml にマージされ、他のキーとコメントは保持されます。サインインは XAI_API_KEY または `grok login` を使用します。その他のキーは「詳細」で編集できます。",
+      "permissionModeLabel": "権限モード",
+      "permissionAsk": "毎回確認",
+      "permissionAlwaysApprove": "常に許可",
+      "reasoningEffortLabel": "推論レベル",
+      "effortLow": "低（高速）",
+      "effortMedium": "中（バランス）",
+      "effortHigh": "高",
+      "effortXhigh": "最大",
+      "optionDefault": "デフォルトを使用",
+      "authTitle": "認証",
+      "authKeyConfigured": "XAI_API_KEY が設定されています。",
+      "authKeyMissing": "XAI_API_KEY が未設定です。",
+      "authLoginHint": "ここで XAI_API_KEY を設定するか、`grok login` でサブスクリプションサインイン（SuperGrok / X Premium+）を行います。",
+      "advancedToggle": "詳細（生の config.toml）",
+      "configTomlNative": "config.toml（ネイティブ）",
+      "configTomlHint": "~/.grok/config.toml 全体としてそのまま書き込まれます。無効な TOML は拒否され、タイプミスでファイルが切り詰められることはありません。",
+      "configTomlPlaceholder": "# 上のコントロール以外のキー。例:\n# [mcp_servers.*]、[cli]、[permission] ルール。"
     },
     "codex": {
       "configDescription": "API URL、API Key、モデル名、reasoning effort を素早く設定でき、`auth.json` / `config.toml` と同期します。",
@@ -876,6 +897,9 @@
       "saveAgentOrderFailed": "Agent の並び順の保存に失敗しました",
       "saveAgentSwitchFailed": "Agent の有効スイッチ保存に失敗しました",
       "saveEnvFailed": "環境変数の保存に失敗しました",
+      "grokSaved": "Grok 設定を保存しました",
+      "saveGrokNativeFailed": "Grok のネイティブ設定の保存に失敗しました",
+      "saveGrokApiKeyFailed": "設定は保存されましたが、API キーを保存できませんでした",
       "codexSaved": "Codex設定を保存しました",
       "saveCodexNativeFailed": "Codexネイティブ設定の保存に失敗しました",
       "geminiSaved": "Gemini設定を保存しました",
@@ -1998,6 +2022,7 @@
           "turnFailedMaxTokens": "{agent} がこのターンの最大トークン数に達しました。",
           "turnFailedMaxTurnRequests": "{agent} がこのターンで許可された最大リクエスト数に達しました。",
           "turnFailedUnknown": "{agent} が不明な停止理由でターンを終了しました。",
+          "grokModelSwitchIncompatibleAgent": "{agent} は既存の会話ではこのモデルに切り替えられません。新しいセッションを開始して使用してください。",
           "turnFailedEmpty": "{agent} は応答を生成せずにターンを終了しました。エージェントの設定を確認してください。"
         },
         "unableReadAgentConfig": "エージェント設定を読み取れません: {message}",

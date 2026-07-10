@@ -563,6 +563,7 @@
       "uninstalling": "卸載中...",
       "saveEnvVars": "儲存環境變數",
       "saving": "儲存中...",
+      "saveGrokConfig": "儲存 Grok 設定",
       "saveCodexConfig": "儲存 Codex 配置",
       "saveGeminiConfig": "儲存 Gemini 配置",
       "saveOpenCodeConfig": "儲存 OpenCode 配置",
@@ -597,6 +598,26 @@
     "preflight": {
       "count": "預檢項：{count}",
       "notRun": "尚未執行檢測。"
+    },
+    "grok": {
+      "configDescription": "在此設定 Grok。下方的控制項（權限模式、推理級別）會合併寫入 ~/.grok/config.toml，保留你的其他鍵與註解。登入使用 XAI_API_KEY 或 `grok login`。其他鍵可在「進階」中編輯。",
+      "permissionModeLabel": "權限模式",
+      "permissionAsk": "每次詢問",
+      "permissionAlwaysApprove": "永遠允許",
+      "reasoningEffortLabel": "推理級別",
+      "effortLow": "低（較快）",
+      "effortMedium": "中（均衡）",
+      "effortHigh": "高",
+      "effortXhigh": "最高",
+      "optionDefault": "使用預設",
+      "authTitle": "驗證",
+      "authKeyConfigured": "已設定 XAI_API_KEY。",
+      "authKeyMissing": "未設定 XAI_API_KEY。",
+      "authLoginHint": "在此設定 XAI_API_KEY，或執行 `grok login` 進行訂閱登入（SuperGrok / X Premium+）。",
+      "advancedToggle": "進階（原始 config.toml）",
+      "configTomlNative": "config.toml（原生）",
+      "configTomlHint": "按原樣整體寫入 ~/.grok/config.toml。非法 TOML 會被拒絕，絕不因筆誤截斷檔案。",
+      "configTomlPlaceholder": "# 上面控制項之外的鍵，例如\n# [mcp_servers.*]、[cli]、[permission] 規則。"
     },
     "codex": {
       "configDescription": "支援 API URL、API Key、模型名稱、Reasoning Effort 快捷配置，並與 `auth.json` / `config.toml` 雙向聯動。",
@@ -876,6 +897,9 @@
       "saveAgentOrderFailed": "儲存 Agent 排序失敗",
       "saveAgentSwitchFailed": "儲存 Agent 開關失敗",
       "saveEnvFailed": "儲存環境變數失敗",
+      "grokSaved": "Grok 設定已儲存",
+      "saveGrokNativeFailed": "儲存 Grok 原生設定失敗",
+      "saveGrokApiKeyFailed": "設定已儲存，但 API Key 未能儲存",
       "codexSaved": "Codex 配置已儲存",
       "saveCodexNativeFailed": "儲存 Codex 原生配置失敗",
       "geminiSaved": "Gemini 配置已儲存",
@@ -1998,6 +2022,7 @@
           "turnFailedMaxTokens": "{agent} 已達到此輪回覆的最大 Token 限制。",
           "turnFailedMaxTurnRequests": "{agent} 已達到此輪回覆允許的最大請求次數。",
           "turnFailedUnknown": "{agent} 以未知的停止原因結束了此輪回覆。",
+          "grokModelSwitchIncompatibleAgent": "{agent} 無法在既有對話中切換到該模型，請新建工作階段以使用它。",
           "turnFailedEmpty": "{agent} 此輪沒有產生任何回覆就結束了，請檢查代理設定。"
         },
         "unableReadAgentConfig": "無法讀取 Agent 設定：{message}",

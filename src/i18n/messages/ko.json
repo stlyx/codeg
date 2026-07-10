@@ -563,6 +563,7 @@
       "uninstalling": "제거 중...",
       "saveEnvVars": "환경 변수 저장",
       "saving": "저장 중...",
+      "saveGrokConfig": "Grok 설정 저장",
       "saveCodexConfig": "Codex 설정 저장",
       "saveGeminiConfig": "Gemini 설정 저장",
       "saveOpenCodeConfig": "OpenCode 설정 저장",
@@ -597,6 +598,26 @@
     "preflight": {
       "count": "사전 점검 항목: {count}",
       "notRun": "점검이 아직 실행되지 않았습니다."
+    },
+    "grok": {
+      "configDescription": "여기에서 Grok을 구성합니다. 아래 컨트롤(권한 모드, 추론 강도)은 ~/.grok/config.toml에 병합되어 다른 키와 주석을 유지합니다. 로그인은 XAI_API_KEY 또는 `grok login`을 사용합니다. 다른 키는 고급에서 편집할 수 있습니다.",
+      "permissionModeLabel": "권한 모드",
+      "permissionAsk": "매번 확인",
+      "permissionAlwaysApprove": "항상 허용",
+      "reasoningEffortLabel": "추론 강도",
+      "effortLow": "낮음(빠름)",
+      "effortMedium": "중간(균형)",
+      "effortHigh": "높음",
+      "effortXhigh": "최대",
+      "optionDefault": "기본값 사용",
+      "authTitle": "인증",
+      "authKeyConfigured": "XAI_API_KEY가 구성되어 있습니다.",
+      "authKeyMissing": "XAI_API_KEY가 설정되지 않았습니다.",
+      "authLoginHint": "여기에서 XAI_API_KEY를 설정하거나 `grok login`으로 구독 로그인(SuperGrok / X Premium+)을 실행하세요.",
+      "advancedToggle": "고급(원본 config.toml)",
+      "configTomlNative": "config.toml(네이티브)",
+      "configTomlHint": "~/.grok/config.toml 전체로 그대로 저장됩니다. 잘못된 TOML은 거부되어 오타로 파일이 잘리지 않습니다.",
+      "configTomlPlaceholder": "# 위 컨트롤 이외의 키, 예:\n# [mcp_servers.*], [cli], [permission] 규칙."
     },
     "codex": {
       "configDescription": "API URL, API Key, 모델 이름, reasoning effort를 빠르게 설정하고 `auth.json` / `config.toml`과 동기화합니다.",
@@ -876,6 +897,9 @@
       "saveAgentOrderFailed": "Agent 순서 저장 실패",
       "saveAgentSwitchFailed": "Agent 스위치 저장 실패",
       "saveEnvFailed": "환경 변수 저장 실패",
+      "grokSaved": "Grok 설정이 저장됨",
+      "saveGrokNativeFailed": "Grok 네이티브 설정 저장 실패",
+      "saveGrokApiKeyFailed": "설정은 저장되었지만 API 키를 저장하지 못했습니다",
       "codexSaved": "Codex 설정 저장됨",
       "saveCodexNativeFailed": "Codex 네이티브 구성 저장 실패",
       "geminiSaved": "Gemini 설정 저장됨",
@@ -1998,6 +2022,7 @@
           "turnFailedMaxTokens": "{agent}이(가) 이번 턴의 최대 토큰 한도에 도달했습니다.",
           "turnFailedMaxTurnRequests": "{agent}이(가) 이번 턴에서 허용된 최대 요청 수에 도달했습니다.",
           "turnFailedUnknown": "{agent}이(가) 알 수 없는 중지 사유로 턴을 종료했습니다.",
+          "grokModelSwitchIncompatibleAgent": "{agent}은(는) 기존 대화에서는 해당 모델로 전환할 수 없습니다. 새 세션을 시작하여 사용하세요.",
           "turnFailedEmpty": "{agent}이(가) 어떤 응답도 생성하지 않고 턴을 종료했습니다. 에이전트 구성을 확인하세요."
         },
         "unableReadAgentConfig": "에이전트 구성을 읽을 수 없습니다: {message}",

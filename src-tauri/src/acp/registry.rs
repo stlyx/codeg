@@ -113,6 +113,7 @@ pub fn all_acp_agents() -> Vec<AgentType> {
         AgentType::CodeBuddy,
         AgentType::KimiCode,
         AgentType::Pi,
+        AgentType::Grok,
     ]
 }
 
@@ -128,6 +129,7 @@ pub fn registry_id_for(agent_type: AgentType) -> &'static str {
         AgentType::CodeBuddy => "codebuddy-code",
         AgentType::KimiCode => "kimi-code",
         AgentType::Pi => "pi-acp",
+        AgentType::Grok => "grok-build",
     }
 }
 
@@ -143,6 +145,7 @@ pub fn from_registry_id(id: &str) -> Option<AgentType> {
         "codebuddy-code" => Some(AgentType::CodeBuddy),
         "kimi-code" => Some(AgentType::KimiCode),
         "pi-acp" => Some(AgentType::Pi),
+        "grok-build" => Some(AgentType::Grok),
         _ => None,
     }
 }
@@ -349,6 +352,38 @@ pub fn get_agent_meta(agent_type: AgentType) -> AcpAgentMeta {
                 node_required: Some("22.0.0"),
             },
         },
+        AgentType::Grok => AcpAgentMeta {
+            agent_type,
+            supports_mcp: true,
+            name: "Grok",
+            description: "xAI's official coding agent and CLI (ACP via grok agent stdio)",
+            // `@xai-official/grok` ships each platform's native binary as a
+            // brotli-compressed **optional dependency** (`@xai-official/grok-<os>-<arch>`);
+            // the npm `bin/grok` trampoline decompresses it into `~/.grok/bin` on
+            // first run. Public mirrors (e.g. registry.npmmirror.com, a common CN
+            // default) lag far behind this package — at time of writing only 0.1.4,
+            // which predates the `grok agent stdio` ACP subcommand — so the pinned
+            // version isn't resolvable there.
+            //
+            // Both concerns are handled by codeg's shared `npm install -g` path
+            // (`install_npm_global_package_streaming` in commands/acp.rs), which
+            // always passes `--include=optional` (pulls the platform binary) and
+            // `--registry=https://registry.npmjs.org` (bypasses lagging mirrors)
+            // for every npx agent — so no per-agent launch env is needed here.
+            // (It couldn't live here anyway: the launch env is serialized as
+            // leading `KEY=value` argv and sacp's `parse_env_var` only accepts
+            // `[A-Za-z0-9_]` env names, which npm's `@scope:registry` key is not.)
+            distribution: AgentDistribution::Npx {
+                version: "0.2.94",
+                package: "@xai-official/grok@0.2.94",
+                cmd: "grok",
+                args: &["agent", "stdio"],
+                env: &[],
+                // `@xai-official/grok@0.2.94` declares `engines.node: ">=20"`;
+                // surface that in preflight so Node 18 isn't silently accepted.
+                node_required: Some("20.0.0"),
+            },
+        },
     }
 }
 
@@ -476,6 +511,12 @@ mod tests {
             None,
         );
         assert_npx_version(AgentType::Pi, "0.0.31", "pi-acp@0.0.31", Some("22.0.0"));
+        assert_npx_version(
+            AgentType::Grok,
+            "0.2.94",
+            "@xai-official/grok@0.2.94",
+            Some("20.0.0"),
+        );
         assert_binary_version(AgentType::OpenCode, "1.17.15", "/releases/download/v1.17.15/");
         assert_uvx_version(
             AgentType::Hermes,

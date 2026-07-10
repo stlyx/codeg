@@ -563,6 +563,7 @@
       "uninstalling": "Uninstalling...",
       "saveEnvVars": "Save environment variables",
       "saving": "Saving...",
+      "saveGrokConfig": "Save Grok Config",
       "saveCodexConfig": "Save Codex Config",
       "saveGeminiConfig": "Save Gemini Config",
       "saveOpenCodeConfig": "Save OpenCode Config",
@@ -597,6 +598,26 @@
     "preflight": {
       "count": "Preflight items: {count}",
       "notRun": "Checks have not run yet."
+    },
+    "grok": {
+      "configDescription": "Configure Grok here. The controls below — permission mode and reasoning effort — merge into ~/.grok/config.toml, preserving your other keys and comments. Sign-in uses your XAI_API_KEY or `grok login`. Other keys stay editable under Advanced.",
+      "permissionModeLabel": "Permission mode",
+      "permissionAsk": "Ask every time",
+      "permissionAlwaysApprove": "Always approve",
+      "reasoningEffortLabel": "Reasoning effort",
+      "effortLow": "Low (faster)",
+      "effortMedium": "Medium (balanced)",
+      "effortHigh": "High",
+      "effortXhigh": "Max",
+      "optionDefault": "Use default",
+      "authTitle": "Authentication",
+      "authKeyConfigured": "XAI_API_KEY is configured.",
+      "authKeyMissing": "No XAI_API_KEY set.",
+      "authLoginHint": "Set XAI_API_KEY here, or run `grok login` for subscription sign-in (SuperGrok / X Premium+).",
+      "advancedToggle": "Advanced (raw config.toml)",
+      "configTomlNative": "config.toml (native)",
+      "configTomlHint": "Saved verbatim as the whole ~/.grok/config.toml. Invalid TOML is rejected so a typo never truncates your file.",
+      "configTomlPlaceholder": "# Keys other than the controls above, e.g.\n# [mcp_servers.*], [cli], [permission] rules."
     },
     "codex": {
       "configDescription": "Supports quick configuration for API URL, API Key, model name and reasoning effort, and syncs with `auth.json` / `config.toml`.",
@@ -876,6 +897,9 @@
       "saveAgentOrderFailed": "Failed to save Agent order",
       "saveAgentSwitchFailed": "Failed to save Agent switch",
       "saveEnvFailed": "Failed to save environment variables",
+      "grokSaved": "Grok config saved",
+      "saveGrokNativeFailed": "Failed to save Grok native config",
+      "saveGrokApiKeyFailed": "Settings saved, but the API key couldn't be saved",
       "codexSaved": "Codex config saved",
       "saveCodexNativeFailed": "Failed to save Codex native config",
       "geminiSaved": "Gemini config saved",
@@ -1998,6 +2022,7 @@
           "turnFailedMaxTokens": "{agent} reached the maximum token limit for this turn.",
           "turnFailedMaxTurnRequests": "{agent} reached the maximum number of allowed requests for this turn.",
           "turnFailedUnknown": "{agent} ended the turn with an unrecognized stop reason.",
+          "grokModelSwitchIncompatibleAgent": "{agent} can't switch to that model in an existing conversation. Start a new session to use it.",
           "turnFailedEmpty": "{agent} ended the turn without producing any response. Please check the agent's configuration."
         },
         "unableReadAgentConfig": "Unable to read Agent config: {message}",

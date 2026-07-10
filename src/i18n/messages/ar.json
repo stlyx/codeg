@@ -563,6 +563,7 @@
       "uninstalling": "جارٍ إزالة التثبيت...",
       "saveEnvVars": "حفظ متغيرات البيئة",
       "saving": "جارٍ الحفظ...",
+      "saveGrokConfig": "حفظ إعدادات Grok",
       "saveCodexConfig": "حفظ إعداد Codex",
       "saveGeminiConfig": "حفظ إعداد Gemini",
       "saveOpenCodeConfig": "حفظ إعداد OpenCode",
@@ -597,6 +598,26 @@
     "preflight": {
       "count": "عناصر الفحص المسبق: {count}",
       "notRun": "لم يتم تشغيل الفحوصات بعد."
+    },
+    "grok": {
+      "configDescription": "اضبط Grok هنا. تُدمج عناصر التحكم أدناه (وضع الأذونات وجهد الاستدلال) في ~/.grok/config.toml مع الحفاظ على مفاتيحك وتعليقاتك الأخرى. يستخدم تسجيل الدخول XAI_API_KEY أو `grok login`. تبقى المفاتيح الأخرى قابلة للتحرير ضمن «متقدم».",
+      "permissionModeLabel": "وضع الأذونات",
+      "permissionAsk": "السؤال في كل مرة",
+      "permissionAlwaysApprove": "الموافقة دائمًا",
+      "reasoningEffortLabel": "جهد الاستدلال",
+      "effortLow": "منخفض (أسرع)",
+      "effortMedium": "متوسط (متوازن)",
+      "effortHigh": "مرتفع",
+      "effortXhigh": "الأقصى",
+      "optionDefault": "استخدام الافتراضي",
+      "authTitle": "المصادقة",
+      "authKeyConfigured": "XAI_API_KEY مُهيَّأ.",
+      "authKeyMissing": "لم يتم تعيين XAI_API_KEY.",
+      "authLoginHint": "عيّن XAI_API_KEY هنا، أو نفّذ `grok login` لتسجيل الدخول بالاشتراك (SuperGrok / X Premium+).",
+      "advancedToggle": "متقدم (config.toml الخام)",
+      "configTomlNative": "config.toml (أصلي)",
+      "configTomlHint": "يُحفظ حرفيًا كملف ~/.grok/config.toml بالكامل. يُرفض TOML غير الصالح حتى لا يقتطع خطأ مطبعي ملفك أبدًا.",
+      "configTomlPlaceholder": "# مفاتيح غير عناصر التحكم أعلاه، مثل\n# [mcp_servers.*] و[cli] وقواعد [permission]."
     },
     "codex": {
       "configDescription": "يدعم الإعداد السريع لعنوان API ومفتاح API واسم النموذج وجهد الاستدلال، مع المزامنة مع `auth.json` / `config.toml`.",
@@ -876,6 +897,9 @@
       "saveAgentOrderFailed": "فشل حفظ ترتيب Agent",
       "saveAgentSwitchFailed": "فشل حفظ مفتاح Agent",
       "saveEnvFailed": "فشل حفظ متغيرات البيئة",
+      "grokSaved": "تم حفظ إعدادات Grok",
+      "saveGrokNativeFailed": "فشل حفظ إعدادات Grok الأصلية",
+      "saveGrokApiKeyFailed": "تم حفظ الإعدادات، لكن تعذّر حفظ مفتاح API",
       "codexSaved": "تم حفظ إعداد Codex",
       "saveCodexNativeFailed": "فشل حفظ إعداد Codex الأصلي",
       "geminiSaved": "تم حفظ إعداد Gemini",
@@ -1998,6 +2022,7 @@
           "turnFailedMaxTokens": "بلغ {agent} الحد الأقصى للرموز المسموح بها في هذه الجولة.",
           "turnFailedMaxTurnRequests": "بلغ {agent} الحد الأقصى لعدد الطلبات المسموح بها في هذه الجولة.",
           "turnFailedUnknown": "أنهى {agent} الجولة بسبب توقف غير معروف.",
+          "grokModelSwitchIncompatibleAgent": "لا يمكن لـ {agent} التبديل إلى هذا النموذج في محادثة قائمة. ابدأ جلسة جديدة لاستخدامه.",
           "turnFailedEmpty": "أنهى {agent} الجولة دون إنتاج أي رد. يرجى التحقق من إعدادات الوكيل."
         },
         "unableReadAgentConfig": "تعذر قراءة إعدادات الوكيل: {message}",

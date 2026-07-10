@@ -57,6 +57,7 @@ pub enum McpAppType {
     Hermes,
     CodeBuddy,
     KimiCode,
+    Grok,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -373,6 +374,7 @@ pub async fn mcp_upsert_local_server(
         McpAppType::Hermes,
         McpAppType::CodeBuddy,
         McpAppType::KimiCode,
+        McpAppType::Grok,
     ];
 
     for app in all_apps {
@@ -430,6 +432,7 @@ pub async fn mcp_remove_server(
             McpAppType::Hermes,
             McpAppType::CodeBuddy,
             McpAppType::KimiCode,
+            McpAppType::Grok,
         ],
     };
 
@@ -2249,6 +2252,13 @@ fn scan_local_servers() -> Result<Vec<LocalMcpServer>, AppCommandError> {
         entry.1.insert(McpAppType::KimiCode);
     }
 
+    for (id, spec) in read_grok_servers()? {
+        let entry = merged
+            .entry(id)
+            .or_insert_with(|| (spec.clone(), BTreeSet::new()));
+        entry.1.insert(McpAppType::Grok);
+    }
+
     Ok(merged
         .into_iter()
         .map(|(id, (spec, apps))| LocalMcpServer {
@@ -2275,6 +2285,7 @@ fn upsert_server_for_app(app: McpAppType, id: &str, spec: &Value) -> Result<(), 
         McpAppType::Hermes => upsert_hermes_server(id, spec),
         McpAppType::CodeBuddy => upsert_codebuddy_server(id, spec),
         McpAppType::KimiCode => upsert_kimi_code_server(id, spec),
+        McpAppType::Grok => upsert_grok_server(id, spec),
     }
 }
 
@@ -2292,6 +2303,7 @@ pub fn read_servers_for_agent_type(
         AgentType::Hermes => read_hermes_servers(),
         AgentType::CodeBuddy => read_codebuddy_servers(),
         AgentType::KimiCode => read_kimi_code_servers(),
+        AgentType::Grok => read_grok_servers(),
         // pi-acp drops ACP-wire MCP and pi has no native MCP (it needs a
         // third-party extension), so codeg manages no MCP servers for pi (v1).
         AgentType::Pi => Ok(BTreeMap::new()),
@@ -2397,6 +2409,333 @@ fn remove_kimi_code_server_at(path: &Path, id: &str) -> Result<bool, AppCommandE
     let removed = servers.remove(id).is_some();
     if removed {
         write_json_file(path, &root)?;
+    }
+    Ok(removed)
+}
+
+// ---------------------------------------------------------------------------
+// Grok  (~/.grok/config.toml  →  [mcp_servers.<name>])
+//
+// Grok reads its user-global MCP config from `<GROK_HOME>/config.toml` (default
+// `~/.grok/config.toml`) under `[mcp_servers.<name>]` sections — the same TOML
+// table Codex uses, but WITHOUT a `type` discriminator: Grok infers the
+// transport from the presence of `command` (stdio) vs `url` (http/sse). The
+// file also holds unrelated sections (`[cli]`, `[ui]`, `[model.*]`), so we
+// read/modify/write the whole document and only touch `[mcp_servers]`.
+//
+// Because Grok loads this file natively at session start, `Grok` is on the ACP
+// forward skip list in `connection.rs` (like Hermes/Kimi) so the same user
+// servers aren't double-registered over `session/new`. The built-in `codeg-mcp`
+// companion is injected separately by `inject_codeg_mcp`, so it still reaches
+// Grok over the wire regardless.
+// ---------------------------------------------------------------------------
+
+fn grok_config_toml_path() -> PathBuf {
+    crate::parsers::grok::resolve_grok_home_dir().join("config.toml")
+}
+
+fn read_grok_root_toml_at(path: &Path) -> Result<toml::Value, AppCommandError> {
+    if !path.exists() {
+        return Ok(toml::Value::Table(toml::map::Map::new()));
+    }
+    let raw = fs::read_to_string(path).map_err(AppCommandError::io)?;
+    let parsed = raw.parse::<toml::Value>().map_err(|e| {
+        mcp_configuration_invalid(format!("invalid TOML at {}: {e}", path.display()))
+    })?;
+    if !parsed.is_table() {
+        return Err(mcp_configuration_invalid(format!(
+            "invalid TOML root at {}: expected table",
+            path.display()
+        )));
+    }
+    Ok(parsed)
+}
+
+fn write_grok_root_toml_at(path: &Path, root: &toml::Value) -> Result<(), AppCommandError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(AppCommandError::io)?;
+    }
+    let serialized = toml::to_string_pretty(root).map_err(|e| {
+        mcp_configuration_invalid(format!("failed to serialize TOML for {}: {e}", path.display()))
+    })?;
+    fs::write(path, format!("{serialized}\n")).map_err(AppCommandError::io)
+}
+
+/// Canonical spec → a Grok `[mcp_servers.<name>]` TOML entry. Grok has no
+/// `type` key (it infers transport from `command`/`url`), so we never write one;
+/// unknown canonical keys (e.g. `enabled`, `startup_timeout_sec`) pass through.
+fn canonical_to_grok_entry(spec: &Value) -> Result<toml::Value, AppCommandError> {
+    let canonical = canonicalize_spec(spec, "Grok conversion")?;
+    let obj = canonical
+        .as_object()
+        .ok_or_else(|| mcp_invalid_input("Grok conversion: canonical spec must be an object"))?;
+    let typ = obj.get("type").and_then(Value::as_str).unwrap_or("stdio");
+
+    let mut table = toml::map::Map::new();
+    match typ {
+        "stdio" => {
+            let command = obj.get("command").and_then(Value::as_str).ok_or_else(|| {
+                mcp_invalid_input("Grok conversion: stdio MCP spec missing command")
+            })?;
+            table.insert("command".to_string(), toml::Value::String(command.to_string()));
+            if let Some(args) = obj.get("args").and_then(Value::as_array) {
+                let values = args
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|value| toml::Value::String(value.to_string()))
+                    .collect::<Vec<_>>();
+                if !values.is_empty() {
+                    table.insert("args".to_string(), toml::Value::Array(values));
+                }
+            }
+            if let Some(env) = obj.get("env").and_then(Value::as_object) {
+                let mut env_table = toml::map::Map::new();
+                for (key, value) in env {
+                    if let Some(text) = value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                        env_table.insert(key.to_string(), toml::Value::String(text.to_string()));
+                    }
+                }
+                if !env_table.is_empty() {
+                    table.insert("env".to_string(), toml::Value::Table(env_table));
+                }
+            }
+            if let Some(cwd) = obj
+                .get("cwd")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                table.insert("cwd".to_string(), toml::Value::String(cwd.to_string()));
+            }
+        }
+        "http" | "sse" => {
+            // Grok infers `http` from a bare `url` and omits `type` for it, but
+            // SSE must carry an explicit `type = "sse"` (verified against Grok's
+            // CLI) — otherwise it round-trips back to `http` and loses the SSE
+            // transport.
+            if typ == "sse" {
+                table.insert("type".to_string(), toml::Value::String("sse".to_string()));
+            }
+            let url = obj
+                .get("url")
+                .and_then(Value::as_str)
+                .ok_or_else(|| mcp_invalid_input("Grok conversion: remote MCP spec missing url"))?;
+            table.insert("url".to_string(), toml::Value::String(url.to_string()));
+            if let Some(headers) = obj.get("headers").and_then(Value::as_object) {
+                let mut headers_table = toml::map::Map::new();
+                for (key, value) in headers {
+                    if let Some(text) = value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                        headers_table
+                            .insert(key.to_string(), toml::Value::String(text.to_string()));
+                    }
+                }
+                if !headers_table.is_empty() {
+                    table.insert("headers".to_string(), toml::Value::Table(headers_table));
+                }
+            }
+        }
+        other => {
+            return Err(mcp_invalid_input(format!(
+                "Grok conversion: unsupported MCP type '{other}'"
+            )));
+        }
+    }
+
+    // Preserve any extra canonical keys (e.g. `enabled`, timeouts) except the
+    // transport fields we already emitted and `type` (Grok has none).
+    for (key, value) in obj {
+        if matches!(
+            key.as_str(),
+            "type" | "command" | "args" | "env" | "cwd" | "url" | "headers"
+        ) {
+            continue;
+        }
+        if let Some(converted) = json_to_toml_value(value) {
+            table.insert(key.to_string(), converted);
+        }
+    }
+
+    Ok(toml::Value::Table(table))
+}
+
+/// A Grok `[mcp_servers.<name>]` TOML entry → canonical spec. Transport is
+/// inferred: a `url` is http (unless SSE is explicit elsewhere), else stdio.
+fn grok_entry_to_canonical(id: &str, value: &toml::Value) -> Result<Value, AppCommandError> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| mcp_invalid_input(format!("Grok MCP entry '{id}' must be a table")))?;
+
+    let mut spec = Map::new();
+    // Grok omits `type` for stdio and http (a bare `url` implies http), but
+    // writes `type = "sse"` explicitly for SSE (verified against Grok's CLI).
+    // Honor an explicit type; otherwise infer the transport from `url` presence.
+    let explicit_type = table
+        .get("type")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let has_url = table
+        .get("url")
+        .and_then(toml::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some();
+    let is_remote = matches!(explicit_type, Some("http") | Some("sse"))
+        || (has_url && explicit_type != Some("stdio"));
+
+    if is_remote {
+        let canonical_type = if explicit_type == Some("sse") { "sse" } else { "http" };
+        spec.insert("type".to_string(), Value::String(canonical_type.to_string()));
+        if let Some(url) = table.get("url").and_then(toml::Value::as_str) {
+            spec.insert("url".to_string(), Value::String(url.trim().to_string()));
+        }
+        if let Some(headers) = table.get("headers").and_then(toml::Value::as_table) {
+            let mut mapped = Map::new();
+            for (key, value) in headers {
+                if let Some(text) = value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    mapped.insert(key.to_string(), Value::String(text.to_string()));
+                }
+            }
+            if !mapped.is_empty() {
+                spec.insert("headers".to_string(), Value::Object(mapped));
+            }
+        }
+    } else {
+        spec.insert("type".to_string(), Value::String("stdio".to_string()));
+        if let Some(command) = table
+            .get("command")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            spec.insert("command".to_string(), Value::String(command.to_string()));
+        }
+        if let Some(args) = table.get("args").and_then(toml::Value::as_array) {
+            let values = args
+                .iter()
+                .filter_map(toml::Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| Value::String(value.to_string()))
+                .collect::<Vec<_>>();
+            if !values.is_empty() {
+                spec.insert("args".to_string(), Value::Array(values));
+            }
+        }
+        if let Some(env) = table.get("env").and_then(toml::Value::as_table) {
+            let mut env_map = Map::new();
+            for (key, value) in env {
+                if let Some(text) = value.as_str().map(str::trim).filter(|s| !s.is_empty()) {
+                    env_map.insert(key.to_string(), Value::String(text.to_string()));
+                }
+            }
+            if !env_map.is_empty() {
+                spec.insert("env".to_string(), Value::Object(env_map));
+            }
+        }
+        if let Some(cwd) = table
+            .get("cwd")
+            .and_then(toml::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            spec.insert("cwd".to_string(), Value::String(cwd.to_string()));
+        }
+    }
+
+    // Passthrough for any Grok-specific keys we don't model (enabled, timeouts).
+    // `type` is handled explicitly above (transport inference), so skip it here.
+    for (key, value) in table {
+        if matches!(
+            key.as_str(),
+            "type" | "command" | "args" | "env" | "cwd" | "url" | "headers"
+        ) {
+            continue;
+        }
+        spec.insert(key.to_string(), toml_to_json_value(value));
+    }
+
+    canonicalize_spec(&Value::Object(spec), "Grok config")
+}
+
+fn read_grok_servers() -> Result<BTreeMap<String, Value>, AppCommandError> {
+    read_grok_servers_at(&grok_config_toml_path())
+}
+
+fn read_grok_servers_at(path: &Path) -> Result<BTreeMap<String, Value>, AppCommandError> {
+    let root = read_grok_root_toml_at(path)?;
+    let mut out = BTreeMap::new();
+    let Some(table) = root.as_table() else {
+        return Ok(out);
+    };
+    if let Some(servers) = table.get("mcp_servers").and_then(toml::Value::as_table) {
+        for (id, spec) in servers {
+            match grok_entry_to_canonical(id, spec) {
+                Ok(normalized) => {
+                    out.insert(id.to_string(), normalized);
+                }
+                Err(err) => {
+                    tracing::warn!("[MCP] skip invalid Grok mcp_servers entry id={id}: {err}");
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn upsert_grok_server(id: &str, spec: &Value) -> Result<(), AppCommandError> {
+    upsert_grok_server_at(&grok_config_toml_path(), id, spec)
+}
+
+fn upsert_grok_server_at(path: &Path, id: &str, spec: &Value) -> Result<(), AppCommandError> {
+    let mut root = read_grok_root_toml_at(path)?;
+    let table = root
+        .as_table_mut()
+        .ok_or_else(|| mcp_configuration_invalid("Grok root TOML must be a table"))?;
+
+    let entry = canonical_to_grok_entry(spec)?;
+    if !table
+        .get("mcp_servers")
+        .map(toml::Value::is_table)
+        .unwrap_or(false)
+    {
+        table.insert(
+            "mcp_servers".to_string(),
+            toml::Value::Table(toml::map::Map::new()),
+        );
+    }
+    let mcp_servers = table
+        .get_mut("mcp_servers")
+        .and_then(toml::Value::as_table_mut)
+        .ok_or_else(|| mcp_configuration_invalid("Grok mcp_servers must be a TOML table"))?;
+    mcp_servers.insert(id.to_string(), entry);
+
+    write_grok_root_toml_at(path, &root)
+}
+
+fn remove_grok_server(id: &str) -> Result<bool, AppCommandError> {
+    remove_grok_server_at(&grok_config_toml_path(), id)
+}
+
+fn remove_grok_server_at(path: &Path, id: &str) -> Result<bool, AppCommandError> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut root = read_grok_root_toml_at(path)?;
+    let Some(table) = root.as_table_mut() else {
+        return Ok(false);
+    };
+    let mut removed = false;
+    if let Some(mcp_servers) = table.get_mut("mcp_servers").and_then(toml::Value::as_table_mut) {
+        removed |= mcp_servers.remove(id).is_some();
+        if mcp_servers.is_empty() {
+            table.remove("mcp_servers");
+        }
+    }
+    if removed {
+        write_grok_root_toml_at(path, &root)?;
     }
     Ok(removed)
 }
@@ -2655,6 +2994,7 @@ fn remove_server_for_app(app: McpAppType, id: &str) -> Result<bool, AppCommandEr
         McpAppType::Hermes => remove_hermes_server(id),
         McpAppType::CodeBuddy => remove_codebuddy_server(id),
         McpAppType::KimiCode => remove_kimi_code_server(id),
+        McpAppType::Grok => remove_grok_server(id),
     }
 }
 
@@ -4486,6 +4826,111 @@ mod tests {
             .expect("read after remove")
             .is_empty());
         assert!(!remove_kimi_code_server_at(&path, "ctx7").expect("remove again"));
+    }
+
+    #[test]
+    fn grok_config_toml_round_trips_and_preserves_sections() {
+        // Grok reads `<GROK_HOME>/config.toml` `[mcp_servers.<name>]` natively —
+        // same table as Codex but with NO `type` key (transport inferred). The
+        // file also holds unrelated `[cli]`/`[ui]` sections that must survive.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[cli]\nauto_update = true\n\n[ui]\nyolo = false\n",
+        )
+        .expect("seed config");
+
+        // Missing entry → no servers; removing is a no-op.
+        assert!(read_grok_servers_at(&path).expect("read seed").is_empty());
+        assert!(!remove_grok_server_at(&path, "fs").expect("remove missing"));
+
+        // Upsert a stdio server carrying command/args/env/cwd.
+        let stdio = json!({
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"],
+            "env": { "TOKEN": "sk-abc" },
+            "cwd": "/work/dir",
+        });
+        upsert_grok_server_at(&path, "fs", &stdio).expect("upsert stdio");
+
+        // Upsert a remote server with headers (Grok uses `headers`, not
+        // Codex's `http_headers`).
+        let http = json!({
+            "type": "http",
+            "url": "https://mcp.example.com/mcp",
+            "headers": { "Authorization": "Bearer xyz" },
+        });
+        upsert_grok_server_at(&path, "remote", &http).expect("upsert http");
+
+        // Upsert an SSE server — Grok marks these with an explicit `type = "sse"`;
+        // without it the entry would round-trip back to `http`.
+        let sse = json!({ "type": "sse", "url": "https://mcp.linear.app/sse" });
+        upsert_grok_server_at(&path, "linear", &sse).expect("upsert sse");
+
+        // All round-trip, canonicalized, with cwd + headers + sse transport kept.
+        let servers = read_grok_servers_at(&path).expect("read back");
+        assert_eq!(servers.len(), 3);
+        let fs = servers.get("fs").expect("fs present");
+        assert_eq!(fs.get("type").and_then(Value::as_str), Some("stdio"));
+        assert_eq!(fs.get("command").and_then(Value::as_str), Some("npx"));
+        assert_eq!(fs.get("cwd").and_then(Value::as_str), Some("/work/dir"));
+        assert_eq!(
+            fs.pointer("/env/TOKEN").and_then(Value::as_str),
+            Some("sk-abc")
+        );
+        let remote = servers.get("remote").expect("remote present");
+        assert_eq!(remote.get("type").and_then(Value::as_str), Some("http"));
+        assert_eq!(
+            remote.pointer("/headers/Authorization").and_then(Value::as_str),
+            Some("Bearer xyz")
+        );
+        let linear = servers.get("linear").expect("linear present");
+        assert_eq!(linear.get("type").and_then(Value::as_str), Some("sse"));
+        assert_eq!(
+            linear.get("url").and_then(Value::as_str),
+            Some("https://mcp.linear.app/sse")
+        );
+
+        // On-disk: `[mcp_servers.fs]` has NO `type` key, `[cli]`/`[ui]` survive.
+        let raw = std::fs::read_to_string(&path).expect("read file");
+        let root: toml::Value = raw.parse().expect("parse toml");
+        let table = root.as_table().expect("root table");
+        assert!(table.contains_key("cli"), "[cli] preserved");
+        assert!(table.contains_key("ui"), "[ui] preserved");
+        let fs_entry = table
+            .get("mcp_servers")
+            .and_then(toml::Value::as_table)
+            .and_then(|m| m.get("fs"))
+            .and_then(toml::Value::as_table)
+            .expect("mcp_servers.fs");
+        assert!(!fs_entry.contains_key("type"), "stdio entries omit `type`");
+        assert_eq!(
+            fs_entry.get("cwd").and_then(toml::Value::as_str),
+            Some("/work/dir")
+        );
+        // SSE entries, by contrast, must keep the explicit `type = "sse"`.
+        let linear_entry = table
+            .get("mcp_servers")
+            .and_then(toml::Value::as_table)
+            .and_then(|m| m.get("linear"))
+            .and_then(toml::Value::as_table)
+            .expect("mcp_servers.linear");
+        assert_eq!(
+            linear_entry.get("type").and_then(toml::Value::as_str),
+            Some("sse")
+        );
+
+        // Remove one; the others and the unrelated sections remain.
+        assert!(remove_grok_server_at(&path, "fs").expect("remove fs"));
+        let after = read_grok_servers_at(&path).expect("read after remove");
+        assert_eq!(after.len(), 2);
+        assert!(after.contains_key("remote"));
+        assert!(after.contains_key("linear"));
+        let raw2 = std::fs::read_to_string(&path).expect("read file 2");
+        let root2: toml::Value = raw2.parse().expect("parse toml 2");
+        assert!(root2.as_table().expect("t").contains_key("cli"));
     }
 
     fn codex_entry(toml_src: &str) -> toml::Value {

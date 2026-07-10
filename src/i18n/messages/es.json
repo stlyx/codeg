@@ -563,6 +563,7 @@
       "uninstalling": "Desinstalando...",
       "saveEnvVars": "Guardar variables de entorno",
       "saving": "Guardando...",
+      "saveGrokConfig": "Guardar configuración de Grok",
       "saveCodexConfig": "Guardar configuración de Codex",
       "saveGeminiConfig": "Guardar configuración de Gemini",
       "saveOpenCodeConfig": "Guardar configuración de OpenCode",
@@ -597,6 +598,26 @@
     "preflight": {
       "count": "Elementos de preflight: {count}",
       "notRun": "Las comprobaciones aún no se han ejecutado."
+    },
+    "grok": {
+      "configDescription": "Configura Grok aquí. Los controles de abajo (modo de permisos y esfuerzo de razonamiento) se fusionan en ~/.grok/config.toml conservando tus otras claves y comentarios. El inicio de sesión usa tu XAI_API_KEY o `grok login`. Las demás claves se editan en Avanzado.",
+      "permissionModeLabel": "Modo de permisos",
+      "permissionAsk": "Preguntar siempre",
+      "permissionAlwaysApprove": "Aprobar siempre",
+      "reasoningEffortLabel": "Esfuerzo de razonamiento",
+      "effortLow": "Bajo (más rápido)",
+      "effortMedium": "Medio (equilibrado)",
+      "effortHigh": "Alto",
+      "effortXhigh": "Máximo",
+      "optionDefault": "Usar predeterminado",
+      "authTitle": "Autenticación",
+      "authKeyConfigured": "XAI_API_KEY está configurada.",
+      "authKeyMissing": "No hay XAI_API_KEY configurada.",
+      "authLoginHint": "Configura XAI_API_KEY aquí o ejecuta `grok login` para iniciar sesión con suscripción (SuperGrok / X Premium+).",
+      "advancedToggle": "Avanzado (config.toml sin procesar)",
+      "configTomlNative": "config.toml (nativo)",
+      "configTomlHint": "Se guarda literalmente como todo el ~/.grok/config.toml. El TOML no válido se rechaza para que una errata no trunque tu archivo.",
+      "configTomlPlaceholder": "# Claves distintas de los controles de arriba, p. ej.\n# [mcp_servers.*], [cli], reglas [permission]."
     },
     "codex": {
       "configDescription": "Admite configuración rápida de URL de API, API Key, nombre del modelo y reasoning effort, y sincroniza con `auth.json` / `config.toml`.",
@@ -876,6 +897,9 @@
       "saveAgentOrderFailed": "No se pudo guardar el orden de Agent",
       "saveAgentSwitchFailed": "No se pudo guardar el switch de Agent",
       "saveEnvFailed": "No se pudieron guardar las variables de entorno",
+      "grokSaved": "Configuración de Grok guardada",
+      "saveGrokNativeFailed": "No se pudo guardar la configuración nativa de Grok",
+      "saveGrokApiKeyFailed": "Ajustes guardados, pero no se pudo guardar la clave API",
       "codexSaved": "Configuración de Codex guardada",
       "saveCodexNativeFailed": "No se pudo guardar la configuración nativa de Codex",
       "geminiSaved": "Configuración de Gemini guardada",
@@ -1998,6 +2022,7 @@
           "turnFailedMaxTokens": "{agent} alcanzó el límite máximo de tokens para este turno.",
           "turnFailedMaxTurnRequests": "{agent} alcanzó el número máximo de solicitudes permitidas para este turno.",
           "turnFailedUnknown": "{agent} finalizó el turno con un motivo de parada no reconocido.",
+          "grokModelSwitchIncompatibleAgent": "{agent} no puede cambiar a ese modelo en una conversación existente. Inicia una nueva sesión para usarlo.",
           "turnFailedEmpty": "{agent} finalizó el turno sin producir ninguna respuesta. Revisa la configuración del agente."
         },
         "unableReadAgentConfig": "No se puede leer la configuración del agente: {message}",

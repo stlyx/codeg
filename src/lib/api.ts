@@ -31,6 +31,7 @@ import type {
   QuestionAnswer,
   AcpAgentInfo,
   AcpAgentStatus,
+  GrokStructuredConfig,
   AgentSkillScope,
   AgentSkillLayout,
   AgentSkillItem,
@@ -423,6 +424,10 @@ export async function acpUpdateAgentConfig(
     opencode_auth_json?: string | null
     codex_auth_json?: string | null
     codex_config_toml?: string | null
+    grok_config_toml?: string | null
+    /** Grok structured controls (mode / reasoning effort); merged onto the
+     * on-disk config.toml server-side. */
+    grok_structured?: GrokStructuredConfig | null
   }
 ): Promise<number> {
   return getTransport().call("acp_update_agent_config", {
@@ -431,6 +436,8 @@ export async function acpUpdateAgentConfig(
     opencodeAuthJson: params.opencode_auth_json ?? null,
     codexAuthJson: params.codex_auth_json ?? null,
     codexConfigToml: params.codex_config_toml ?? null,
+    grokConfigToml: params.grok_config_toml ?? null,
+    grokStructured: params.grok_structured ?? null,
   })
 }
 
