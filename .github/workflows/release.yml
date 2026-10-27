@@ -300,7 +300,52 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # Computer use on macOS: codeg and codeg-computer-helper each check the
+      # Forks without Apple credentials use the existing ad-hoc build path.
+      # A partially configured Developer ID release must still fail, rather
+      # than silently fall back to a different signing identity.
+      - name: Configure macOS signing
+        id: macos-signing
+        if: contains(matrix.target, 'apple-darwin')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            KEYCHAIN_PASSWORD \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -eq 6 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "No Apple credentials configured; building ad-hoc signed macOS bundles."
+          elif [ "${#missing[@]}" -ne 0 ]; then
+            printf '::error::Missing required Apple signing secret(s): %s\n' "${missing[*]}"
+            exit 1
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            # Unset credentials must stay absent: Tauri treats empty Apple
+            # env vars as a request to notarize even an ad-hoc bundle.
+            for name in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+            done
+          fi
+
+      # Developer ID builds: codeg and codeg-computer-helper each check the
       # other's code signature at run time, against a designated requirement
       # compiled into the binary (never read from the bundle, which the user
       # can write to), and codeg launches the helper under a launch
@@ -312,7 +357,7 @@ jobs:
       # without its requirement refuses to start once it is Developer-ID
       # signed, and codeg will not build with one pin and not the other.
       - name: Pin computer-use trust anchors (macOS)
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && steps.macos-signing.outputs.enabled == 'true'
         shell: bash
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -371,7 +416,7 @@ jobs:
           esac
 
       - name: Import Apple Developer ID certificate
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && steps.macos-signing.outputs.enabled == 'true'
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -446,7 +491,7 @@ jobs:
           security find-identity -v -p codesigning "$keychain_path"
 
       - name: Resolve Apple Developer ID identity
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && steps.macos-signing.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -475,12 +520,21 @@ jobs:
       - name: Sign the computer-use helper app (macOS)
         if: contains(matrix.target, 'apple-darwin')
         shell: bash
+        env:
+          DEVELOPER_ID_SIGNING: ${{ steps.macos-signing.outputs.enabled }}
         run: |
           set -euo pipefail
           helper_app="src-tauri/binaries/codeg-computer-helper.app"
-          codesign --force --options runtime --timestamp \
+          timestamp=(--timestamp=none)
+          if [ "$DEVELOPER_ID_SIGNING" = true ]; then
+            timestamp=(--timestamp)
+          fi
+          codesign --force --options runtime "${timestamp[@]}" \
             --sign "$APPLE_SIGNING_IDENTITY" "$helper_app"
-          codesign --verify --strict -R="${CODEG_COMPUTER_HELPER_REQUIREMENT}" "$helper_app"
+          codesign --verify --strict "$helper_app"
+          if [ "$DEVELOPER_ID_SIGNING" = true ]; then
+            codesign --verify --strict -R="${CODEG_COMPUTER_HELPER_REQUIREMENT}" "$helper_app"
+          fi
           codesign -dv "$helper_app" 2>&1 | grep -E '^(Identifier|TeamIdentifier)='
 
       - name: Build and upload to draft release (Linux arm64)
@@ -569,14 +623,8 @@ jobs:
           # do not fall back to the runner host triple.
           CODEG_SKIP_SIDECAR: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Tauri notarizes the signed bundle when these three env vars are
-          # present (in addition to the imported Developer ID cert +
-          # APPLE_SIGNING_IDENTITY used for code signing).
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Configure macOS signing exports notarization credentials only
+          # for Developer ID builds; ad-hoc builds must leave them unset.
         with:
           releaseId: ${{ needs.create-draft-release.outputs.release_id }}
           tagName: ${{ github.ref_name }}
@@ -585,7 +633,7 @@ jobs:
           prerelease: ${{ needs.create-draft-release.outputs.prerelease }}
           tauriScript: pnpm tauri
           args: --target ${{ matrix.target }}
-          includeUpdaterJson: true
+          includeUpdaterJson: false
           retryAttempts: 2
 
       # The release gate for computer use on macOS. Notarization and a
@@ -620,6 +668,8 @@ jobs:
       - name: Verify computer-use signing and symbols (macOS)
         if: contains(matrix.target, 'apple-darwin')
         shell: bash
+        env:
+          DEVELOPER_ID_SIGNING: ${{ steps.macos-signing.outputs.enabled }}
         run: |
           set -euo pipefail
           app="src-tauri/target/${{ matrix.target }}/release/bundle/macos/codeg.app"
@@ -649,6 +699,16 @@ jobs:
           done
           for path in "$app/Contents/MacOS/codeg" "$app/Contents/MacOS/codeg-mcp" "$app/Contents/MacOS/codeg-cli" "$helper_app"; do
             name="$(basename "$path")"
+            if [ "$DEVELOPER_ID_SIGNING" != true ]; then
+              # Ad-hoc helpers must carry no Team ID. Their permissions are
+              # tied to this build's cdhash, as required by helper::open_channel.
+              signature="$(codesign -dv "$path" 2>&1)"
+              if ! printf '%s\n' "$signature" | grep -qx 'Signature=adhoc' || \
+                 ! printf '%s\n' "$signature" | grep -qx 'TeamIdentifier=not set'; then
+                echo "FATAL: $name must be ad-hoc signed without a Team ID"
+                exit 1
+              fi
+            fi
             if ! codesign -dv "$path" 2>&1 | grep -q 'flags=0x[0-9a-f]*(runtime)'; then
               echo "FATAL: $name is not signed with the hardened runtime"
               exit 1
@@ -659,8 +719,10 @@ jobs:
               exit 1
             fi
           done
-          codesign --verify --strict -R="${CODEG_COMPUTER_PEER_REQUIREMENT}" "$app/Contents/MacOS/codeg"
-          codesign --verify --strict -R="${CODEG_COMPUTER_HELPER_REQUIREMENT}" "$helper_app"
+          if [ "$DEVELOPER_ID_SIGNING" = true ]; then
+            codesign --verify --strict -R="${CODEG_COMPUTER_PEER_REQUIREMENT}" "$app/Contents/MacOS/codeg"
+            codesign --verify --strict -R="${CODEG_COMPUTER_HELPER_REQUIREMENT}" "$helper_app"
+          fi
           deny='^_(CGEventPost|CGEventPostToPid|CGEventPostToPSN|CGEventTapCreate|CGEventTapCreateForPid|CGEventTapCreateForPSN|CGWindowListCreateImage|CGWindowListCreateImageFromArray|CGDisplayCreateImage|CGDisplayCreateImageForRect|CGDisplayStreamCreate|CGDisplayStreamCreateWithDispatchQueue|CGRequestScreenCaptureAccess|CGRequestPostEventAccess|AXIsProcessTrustedWithOptions|AXUIElement[A-Za-z]*|AXObserver[A-Za-z]*)$|^_OBJC_CLASS_\$_SC(ShareableContent|Stream|ScreenshotManager|ContentFilter|ContentSharingPicker)$'
           for bin in codeg codeg-mcp codeg-cli; do
             hits="$(nm -u "$app/Contents/MacOS/$bin" | grep -E "$deny" || true)"
@@ -676,7 +738,7 @@ jobs:
           echo "computer-use signing and symbol checks passed"
 
       - name: Delete Apple signing keychain
-        if: always() && contains(matrix.target, 'apple-darwin')
+        if: always() && contains(matrix.target, 'apple-darwin') && steps.macos-signing.outputs.enabled == 'true'
         shell: bash
         run: |
           if [ -n "${APPLE_ORIGINAL_DEFAULT_KEYCHAIN:-}" ]; then
