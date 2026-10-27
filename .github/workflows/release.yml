@@ -674,47 +674,48 @@ jobs:
           set -euo pipefail
           app="src-tauri/target/${{ matrix.target }}/release/bundle/macos/codeg.app"
           if [ ! -d "$app" ]; then
-            echo "FATAL: $app not found"
+            echo "::error::$app not found"
             exit 1
           fi
           codesign --verify --strict --deep "$app"
           helper_app="$app/Contents/Helpers/codeg-computer-helper.app"
           if [ -e "$app/Contents/MacOS/codeg-computer-helper" ]; then
-            echo "FATAL: codeg-computer-helper is in Contents/MacOS, where macOS charges it to codeg"
+            echo "::error::codeg-computer-helper is in Contents/MacOS, where macOS charges it to codeg"
             exit 1
           fi
           if [ ! -d "$helper_app" ]; then
-            echo "FATAL: $helper_app not found"
+            echo "::error::$helper_app not found"
             exit 1
           fi
           if [ -e "$app/Contents/MacOS/codeg-server" ]; then
-            echo "FATAL: codeg-server is in the desktop bundle; its binary target must need server-bin"
+            echo "::error::codeg-server is in the desktop bundle; its binary target must need server-bin"
             exit 1
           fi
           for sidecar in codeg-mcp codeg-cli; do
             if otool -L "$app/Contents/MacOS/$sidecar" | grep -q 'WebKit'; then
-              echo "FATAL: $sidecar links WebKit: tauri build's own copy replaced the sidecar"
+              echo "::error::$sidecar links WebKit: tauri build's own copy replaced the sidecar"
               exit 1
             fi
           done
           for path in "$app/Contents/MacOS/codeg" "$app/Contents/MacOS/codeg-mcp" "$app/Contents/MacOS/codeg-cli" "$helper_app"; do
             name="$(basename "$path")"
+            signature="$(codesign -dv "$path" 2>&1)"
             if [ "$DEVELOPER_ID_SIGNING" != true ]; then
               # Ad-hoc helpers must carry no Team ID. Their permissions are
               # tied to this build's cdhash, as required by helper::open_channel.
-              signature="$(codesign -dv "$path" 2>&1)"
               if ! printf '%s\n' "$signature" | grep -qx 'Signature=adhoc' || \
                  ! printf '%s\n' "$signature" | grep -qx 'TeamIdentifier=not set'; then
-                echo "FATAL: $name must be ad-hoc signed without a Team ID"
+                echo "::error::$name must be ad-hoc signed without a Team ID"
                 exit 1
               fi
             fi
-            if ! codesign -dv "$path" 2>&1 | grep -q 'flags=0x[0-9a-f]*(runtime)'; then
-              echo "FATAL: $name is not signed with the hardened runtime"
+            # Ad-hoc signatures include both flags: (adhoc,runtime).
+            if ! printf '%s\n' "$signature" | grep -Eq 'flags=0x[0-9a-f]+\(([^,()]+,)*runtime(,[^,()]+)*\)'; then
+              echo "::error::$name is not signed with the hardened runtime"
               exit 1
             fi
             if codesign -d --entitlements - --xml "$path" 2>/dev/null | grep -q '<key>'; then
-              echo "FATAL: $name carries entitlements; codeg's executables must carry none"
+              echo "::error::$name carries entitlements; codeg's executables must carry none"
               codesign -d --entitlements - "$path" || true
               exit 1
             fi
@@ -730,7 +731,7 @@ jobs:
               hits="$(printf '%s\n' "$hits" | grep -vx '_CGEventTapCreate' || true)"
             fi
             if [ -n "$hits" ]; then
-              echo "FATAL: $bin references APIs only codeg-computer-helper may use:"
+              echo "::error::$bin references APIs only codeg-computer-helper may use:"
               echo "$hits"
               exit 1
             fi
