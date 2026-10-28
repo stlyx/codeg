@@ -300,7 +300,52 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      # Computer use on macOS: codeg and codeg-computer-helper each check the
+      # Forks without Apple credentials use the existing ad-hoc build path.
+      # A partially configured Developer ID release must still fail, rather
+      # than silently fall back to a different signing identity.
+      - name: Configure macOS signing
+        id: macos-signing
+        if: contains(matrix.target, 'apple-darwin')
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD \
+            KEYCHAIN_PASSWORD \
+            APPLE_ID \
+            APPLE_PASSWORD \
+            APPLE_TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [ "${#missing[@]}" -eq 6 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "No Apple credentials configured; building ad-hoc signed macOS bundles."
+          elif [ "${#missing[@]}" -ne 0 ]; then
+            printf '::error::Missing required Apple signing secret(s): %s\n' "${missing[*]}"
+            exit 1
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            # Unset credentials must stay absent: Tauri treats empty Apple
+            # env vars as a request to notarize even an ad-hoc bundle.
+            for name in APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+              printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+            done
+          fi
+
+      # Developer ID builds: codeg and codeg-computer-helper each check the
       # other's code signature at run time, against a designated requirement
       # compiled into the binary (never read from the bundle, which the user
       # can write to), and codeg launches the helper under a launch
@@ -312,7 +357,7 @@ jobs:
       # without its requirement refuses to start once it is Developer-ID
       # signed, and codeg will not build with one pin and not the other.
       - name: Pin computer-use trust anchors (macOS)
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && steps.macos-signing.outputs.enabled == 'true'
         shell: bash
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -371,7 +416,7 @@ jobs:
           esac
 
       - name: Import Apple Developer ID certificate
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && steps.macos-signing.outputs.enabled == 'true'
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -446,7 +491,7 @@ jobs:
           security find-identity -v -p codesigning "$keychain_path"
 
       - name: Resolve Apple Developer ID identity
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && steps.macos-signing.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -475,12 +520,21 @@ jobs:
       - name: Sign the computer-use helper app (macOS)
         if: contains(matrix.target, 'apple-darwin')
         shell: bash
+        env:
+          DEVELOPER_ID_SIGNING: ${{ steps.macos-signing.outputs.enabled }}
         run: |
           set -euo pipefail
           helper_app="src-tauri/binaries/codeg-computer-helper.app"
-          codesign --force --options runtime --timestamp \
+          timestamp=(--timestamp=none)
+          if [ "$DEVELOPER_ID_SIGNING" = true ]; then
+            timestamp=(--timestamp)
+          fi
+          codesign --force --options runtime "${timestamp[@]}" \
             --sign "$APPLE_SIGNING_IDENTITY" "$helper_app"
-          codesign --verify --strict -R="${CODEG_COMPUTER_HELPER_REQUIREMENT}" "$helper_app"
+          codesign --verify --strict "$helper_app"
+          if [ "$DEVELOPER_ID_SIGNING" = true ]; then
+            codesign --verify --strict -R="${CODEG_COMPUTER_HELPER_REQUIREMENT}" "$helper_app"
+          fi
           codesign -dv "$helper_app" 2>&1 | grep -E '^(Identifier|TeamIdentifier)='
 
       - name: Build and upload to draft release (Linux arm64)
@@ -492,8 +546,6 @@ jobs:
           # do not fall back to the runner host triple.
           CODEG_SKIP_SIDECAR: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           PKG_CONFIG_ALLOW_CROSS: 1
           PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
           PKG_CONFIG_LIBDIR: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
@@ -527,8 +579,6 @@ jobs:
           # do not fall back to the runner host triple.
           CODEG_SKIP_SIDECAR: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-draft-release.outputs.release_id }}
           tagName: ${{ github.ref_name }}
@@ -537,10 +587,9 @@ jobs:
           prerelease: ${{ needs.create-draft-release.outputs.prerelease }}
           tauriScript: pnpm tauri
           # Skip MSI bundling on Windows: tauri-apps/tauri#14681 — light.exe
-          # fails when externalBin is configured. NSIS installer + updater
-          # artifacts cover the same distribution channel.
-          args: --target ${{ matrix.target }} --bundles nsis,updater
-          includeUpdaterJson: true
+          # fails when externalBin is configured. NSIS covers Windows install.
+          args: --target ${{ matrix.target }} --bundles nsis
+          includeUpdaterJson: false
           retryAttempts: 2
 
       - name: Build and upload to draft release (Linux x64)
@@ -552,8 +601,6 @@ jobs:
           # do not fall back to the runner host triple.
           CODEG_SKIP_SIDECAR: "1"
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-draft-release.outputs.release_id }}
           tagName: ${{ github.ref_name }}
@@ -564,7 +611,7 @@ jobs:
           # Every Linux bundle (deb, rpm, AppImage), less the .rpm for a
           # release candidate: see the arm64 step.
           args: --target ${{ matrix.target }}${{ contains(github.ref_name, '-') && ' --bundles deb,appimage' || '' }}
-          includeUpdaterJson: true
+          includeUpdaterJson: false
           retryAttempts: 2
 
       - name: Build, sign, and upload to draft release (macOS)
@@ -580,14 +627,8 @@ jobs:
           # what Node already gets on the 16 GB Linux and Windows runners.
           NODE_OPTIONS: --max-old-space-size=4096
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Tauri notarizes the signed bundle when these three env vars are
-          # present (in addition to the imported Developer ID cert +
-          # APPLE_SIGNING_IDENTITY used for code signing).
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Configure macOS signing exports notarization credentials only
+          # for Developer ID builds; ad-hoc builds must leave them unset.
         with:
           releaseId: ${{ needs.create-draft-release.outputs.release_id }}
           tagName: ${{ github.ref_name }}
@@ -596,7 +637,7 @@ jobs:
           prerelease: ${{ needs.create-draft-release.outputs.prerelease }}
           tauriScript: pnpm tauri
           args: --target ${{ matrix.target }}
-          includeUpdaterJson: true
+          includeUpdaterJson: false
           retryAttempts: 2
 
       # The release gate for computer use on macOS. Notarization and a
@@ -631,47 +672,62 @@ jobs:
       - name: Verify computer-use signing and symbols (macOS)
         if: contains(matrix.target, 'apple-darwin')
         shell: bash
+        env:
+          DEVELOPER_ID_SIGNING: ${{ steps.macos-signing.outputs.enabled }}
         run: |
           set -euo pipefail
           app="src-tauri/target/${{ matrix.target }}/release/bundle/macos/codeg.app"
           if [ ! -d "$app" ]; then
-            echo "FATAL: $app not found"
+            echo "::error::$app not found"
             exit 1
           fi
           codesign --verify --strict --deep "$app"
           helper_app="$app/Contents/Helpers/codeg-computer-helper.app"
           if [ -e "$app/Contents/MacOS/codeg-computer-helper" ]; then
-            echo "FATAL: codeg-computer-helper is in Contents/MacOS, where macOS charges it to codeg"
+            echo "::error::codeg-computer-helper is in Contents/MacOS, where macOS charges it to codeg"
             exit 1
           fi
           if [ ! -d "$helper_app" ]; then
-            echo "FATAL: $helper_app not found"
+            echo "::error::$helper_app not found"
             exit 1
           fi
           if [ -e "$app/Contents/MacOS/codeg-server" ]; then
-            echo "FATAL: codeg-server is in the desktop bundle; its binary target must need server-bin"
+            echo "::error::codeg-server is in the desktop bundle; its binary target must need server-bin"
             exit 1
           fi
           for sidecar in codeg-mcp codeg-cli; do
             if otool -L "$app/Contents/MacOS/$sidecar" | grep -q 'WebKit'; then
-              echo "FATAL: $sidecar links WebKit: tauri build's own copy replaced the sidecar"
+              echo "::error::$sidecar links WebKit: tauri build's own copy replaced the sidecar"
               exit 1
             fi
           done
           for path in "$app/Contents/MacOS/codeg" "$app/Contents/MacOS/codeg-mcp" "$app/Contents/MacOS/codeg-cli" "$helper_app"; do
             name="$(basename "$path")"
-            if ! codesign -dv "$path" 2>&1 | grep -q 'flags=0x[0-9a-f]*(runtime)'; then
-              echo "FATAL: $name is not signed with the hardened runtime"
+            signature="$(codesign -dv "$path" 2>&1)"
+            if [ "$DEVELOPER_ID_SIGNING" != true ]; then
+              # Ad-hoc helpers must carry no Team ID. Their permissions are
+              # tied to this build's cdhash, as required by helper::open_channel.
+              if ! printf '%s\n' "$signature" | grep -qx 'Signature=adhoc' || \
+                 ! printf '%s\n' "$signature" | grep -qx 'TeamIdentifier=not set'; then
+                echo "::error::$name must be ad-hoc signed without a Team ID"
+                exit 1
+              fi
+            fi
+            # Ad-hoc signatures include both flags: (adhoc,runtime).
+            if ! printf '%s\n' "$signature" | grep -Eq 'flags=0x[0-9a-f]+\(([^,()]+,)*runtime(,[^,()]+)*\)'; then
+              echo "::error::$name is not signed with the hardened runtime"
               exit 1
             fi
             if codesign -d --entitlements - --xml "$path" 2>/dev/null | grep -q '<key>'; then
-              echo "FATAL: $name carries entitlements; codeg's executables must carry none"
+              echo "::error::$name carries entitlements; codeg's executables must carry none"
               codesign -d --entitlements - "$path" || true
               exit 1
             fi
           done
-          codesign --verify --strict -R="${CODEG_COMPUTER_PEER_REQUIREMENT}" "$app/Contents/MacOS/codeg"
-          codesign --verify --strict -R="${CODEG_COMPUTER_HELPER_REQUIREMENT}" "$helper_app"
+          if [ "$DEVELOPER_ID_SIGNING" = true ]; then
+            codesign --verify --strict -R="${CODEG_COMPUTER_PEER_REQUIREMENT}" "$app/Contents/MacOS/codeg"
+            codesign --verify --strict -R="${CODEG_COMPUTER_HELPER_REQUIREMENT}" "$helper_app"
+          fi
           deny='^_(CGEventPost|CGEventPostToPid|CGEventPostToPSN|CGEventTapCreate|CGEventTapCreateForPid|CGEventTapCreateForPSN|CGWindowListCreateImage|CGWindowListCreateImageFromArray|CGDisplayCreateImage|CGDisplayCreateImageForRect|CGDisplayStreamCreate|CGDisplayStreamCreateWithDispatchQueue|CGRequestScreenCaptureAccess|CGRequestPostEventAccess|AXIsProcessTrustedWithOptions|AXUIElement[A-Za-z]*|AXObserver[A-Za-z]*)$|^_OBJC_CLASS_\$_SC(ShareableContent|Stream|ScreenshotManager|ContentFilter|ContentSharingPicker)$'
           for bin in codeg codeg-mcp codeg-cli; do
             hits="$(nm -u "$app/Contents/MacOS/$bin" | grep -E "$deny" || true)"
@@ -679,7 +735,7 @@ jobs:
               hits="$(printf '%s\n' "$hits" | grep -vx '_CGEventTapCreate' || true)"
             fi
             if [ -n "$hits" ]; then
-              echo "FATAL: $bin references APIs only codeg-computer-helper may use:"
+              echo "::error::$bin references APIs only codeg-computer-helper may use:"
               echo "$hits"
               exit 1
             fi
@@ -687,7 +743,7 @@ jobs:
           echo "computer-use signing and symbol checks passed"
 
       - name: Delete Apple signing keychain
-        if: always() && contains(matrix.target, 'apple-darwin')
+        if: always() && contains(matrix.target, 'apple-darwin') && steps.macos-signing.outputs.enabled == 'true'
         shell: bash
         run: |
           if [ -n "${APPLE_ORIGINAL_DEFAULT_KEYCHAIN:-}" ]; then
@@ -855,6 +911,7 @@ jobs:
       # unlocked. No notarization credentials: these binaries are not
       # notarized.
       - name: Import Apple Developer ID certificate (macOS)
+        id: server-macos-signing
         if: contains(matrix.target, 'apple-darwin')
         shell: bash
         env:
@@ -876,10 +933,16 @@ jobs:
             fi
           done
 
-          if [ "${#missing[@]}" -ne 0 ]; then
+          if [ "${#missing[@]}" -eq 4 ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "No Apple credentials configured; server binaries will be unsigned."
+            exit 0
+          elif [ "${#missing[@]}" -ne 0 ]; then
             printf '::error::Missing required Apple signing secret(s): %s\n' "${missing[*]}"
             exit 1
           fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
 
           keychain_path="$RUNNER_TEMP/codeg-signing.keychain-db"
           certificate_path="$RUNNER_TEMP/developer-id.p12"
@@ -925,7 +988,7 @@ jobs:
           security find-identity -v -p codesigning "$keychain_path"
 
       - name: Resolve Apple Developer ID identity (macOS)
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && steps.server-macos-signing.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -959,7 +1022,7 @@ jobs:
       # build pins none. Last, the signed server is run once (`--version`) to
       # show it still launches under the hardened runtime.
       - name: Sign the server's executables with the Developer ID (macOS)
-        if: contains(matrix.target, 'apple-darwin')
+        if: contains(matrix.target, 'apple-darwin') && steps.server-macos-signing.outputs.enabled == 'true'
         shell: bash
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -1096,170 +1159,56 @@ jobs:
             throw "codeg-cli --help output unexpected: $cliHelp"
           }
 
-      - name: Upload artifact for Docker build (Linux only)
-        if: startsWith(matrix.target, 'x86_64-unknown-linux') || startsWith(matrix.target, 'aarch64-unknown-linux')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}
-          retention-days: 1
-
-      # Sign the server bundle with the SAME minisign key the desktop
-      # updater uses (`tauri signer sign` writes `<file>.sig`). The server's
-      # `update::verify` module verifies this signature against the embedded
-      # public key before installing — see src-tauri/src/update/verify.rs.
-      # `--app-version` binds it to this release's version (the tag, which
-      # the draft-release job matched against tauri.conf.json): the server
-      # refuses an archive signed for any other version than latest.json
-      # announces, or for none.
-      - name: Sign and checksum bundle (Unix)
+      - name: Checksum bundle (Unix)
         if: runner.os != 'Windows'
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          pnpm tauri signer sign --app-version "${GITHUB_REF_NAME#v}" "dist/${{ matrix.artifact }}.tar.gz"
-          test -f "dist/${{ matrix.artifact }}.tar.gz.sig"
           ( cd dist && shasum -a 256 "${{ matrix.artifact }}.tar.gz" > "${{ matrix.artifact }}.tar.gz.sha256" )
 
-      - name: Sign and checksum bundle (Windows)
+      - name: Checksum bundle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          pnpm tauri signer sign --app-version $version "dist/${{ matrix.artifact }}.zip"
-          if (-not (Test-Path "dist/${{ matrix.artifact }}.zip.sig")) {
-            throw "signature not produced for ${{ matrix.artifact }}.zip"
-          }
           $hash = (Get-FileHash -Algorithm SHA256 "dist/${{ matrix.artifact }}.zip").Hash.ToLower()
           "$hash  ${{ matrix.artifact }}.zip" | Out-File -Encoding ascii "dist/${{ matrix.artifact }}.zip.sha256"
 
-      - name: Upload to release (Unix)
-        if: runner.os != 'Windows'
+      - name: Upload server bundle to draft release
+        uses: actions/github-script@v7
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ github.ref_name }}" \
-            "dist/${{ matrix.artifact }}.tar.gz" \
-            "dist/${{ matrix.artifact }}.tar.gz.sig" \
-            "dist/${{ matrix.artifact }}.tar.gz.sha256" \
-            --clobber
-
-      - name: Upload to release (Windows)
-        if: runner.os == 'Windows'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" "dist/${{ matrix.artifact }}.zip" "dist/${{ matrix.artifact }}.zip.sig" "dist/${{ matrix.artifact }}.zip.sha256" --clobber
-
-  build-docker:
-    needs:
-      - create-draft-release
-      - build-server
-    name: Build Docker image
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Linux x64 artifact
-        uses: actions/download-artifact@v4
+          RELEASE_ID: ${{ needs.create-draft-release.outputs.release_id }}
+          ARTIFACT_NAME: ${{ matrix.artifact }}
         with:
-          name: codeg-server-linux-x64
-          path: artifacts/linux-x64
+          script: |
+            const fs = require('node:fs');
+            const { owner, repo } = context.repo;
+            const release_id = Number(process.env.RELEASE_ID);
+            const extension = process.platform === 'win32' ? 'zip' : 'tar.gz';
+            const bundle = `${process.env.ARTIFACT_NAME}.${extension}`;
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner, repo, release_id, per_page: 100,
+            });
 
-      - name: Download Linux arm64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: codeg-server-linux-arm64
-          path: artifacts/linux-arm64
-
-      - name: Prepare Docker build context
-        run: |
-          set -euo pipefail
-          mkdir -p dist/amd64 dist/arm64
-          cp artifacts/linux-x64/codeg-server dist/amd64/codeg-server
-          cp artifacts/linux-x64/codeg-mcp dist/amd64/codeg-mcp
-          cp artifacts/linux-x64/codeg-cli dist/amd64/codeg-cli
-          cp artifacts/linux-arm64/codeg-server dist/arm64/codeg-server
-          cp artifacts/linux-arm64/codeg-mcp dist/arm64/codeg-mcp
-          cp artifacts/linux-arm64/codeg-cli dist/arm64/codeg-cli
-          cp -r artifacts/linux-x64/web dist/web
-          chmod +x dist/amd64/codeg-server dist/amd64/codeg-mcp dist/amd64/codeg-cli \
-                   dist/arm64/codeg-server dist/arm64/codeg-mcp dist/arm64/codeg-cli
-          # Fail fast if any companion went missing — Docker would otherwise
-          # produce an image where delegation silently degrades, or without
-          # the codeg-cli its docs promise.
-          for f in dist/amd64/codeg-mcp dist/arm64/codeg-mcp dist/amd64/codeg-cli dist/arm64/codeg-cli; do
-            test -x "$f" || { echo "FATAL: $f missing or non-exec"; exit 1; }
-          done
-
-      - name: Set up QEMU (for multi-arch manifest)
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      # The image runs its codeg-cli before it is pushed: an amd64 build loaded
-      # into the runner's daemon, `codeg-cli --version` inside it.
-      - name: Smoke test the image's codeg-cli (amd64)
-        run: |
-          set -euo pipefail
-          docker buildx build --platform linux/amd64 --load -t codeg-smoke:local -f Dockerfile.ci .
-          docker run --rm codeg-smoke:local codeg-cli --version | grep -F 'codeg-cli '
-          docker run --rm codeg-smoke:local codeg-cli --help | grep -F 'Usage: codeg-cli'
-
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      # `latest` is the newest stable release. A release candidate goes out
-      # under its own version only, so nothing that pulls `latest` is moved
-      # onto it; the line that would name `latest` is left empty, and
-      # build-push-action skips empty lines.
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: Dockerfile.ci
-          platforms: linux/amd64,linux/arm64
-          push: true
-          # The source label is how ghcr.io ties the package to this
-          # repository: the package page links back here and the package
-          # inherits the repository's access permissions.
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/codeg:${{ steps.version.outputs.version }}
-            ${{ needs.create-draft-release.outputs.prerelease != 'true' && format('ghcr.io/{0}:latest', github.repository) || '' }}
-            ${{ needs.create-draft-release.outputs.prerelease != 'true' && format('{0}/codeg:latest', secrets.DOCKERHUB_USERNAME) || '' }}
+            // Use the same release ID as the desktop jobs. A tag can have
+            // multiple drafts after retries; resolving it again can upload
+            // server bundles into a draft that will never be published.
+            for (const name of [bundle, `${bundle}.sha256`]) {
+              const existing = assets.find(asset => asset.name === name);
+              if (existing) {
+                await github.rest.repos.deleteReleaseAsset({ owner, repo, asset_id: existing.id });
+              }
+              await github.rest.repos.uploadReleaseAsset({
+                owner, repo, release_id, name,
+                data: fs.readFileSync(`dist/${name}`),
+              });
+              core.info(`Uploaded ${name} to release #${release_id}`);
+            }
 
   publish-release:
     needs:
       - create-draft-release
       - build-tauri
       - build-server
-      - build-docker
-    if: ${{ needs.build-tauri.result == 'success' && needs.build-server.result == 'success' && needs.build-docker.result == 'success' }}
+    if: ${{ needs.build-tauri.result == 'success' && needs.build-server.result == 'success' }}
     runs-on: ubuntu-22.04
     permissions:
       contents: write
