@@ -1,0 +1,106 @@
+name: Repair release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag whose server assets should be recovered
+        required: true
+        default: v0.40.0-hw
+  push:
+    branches: [main]
+    paths: [.github/workflows/repair-release-assets.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repair-release-assets-${{ inputs.tag || 'v0.40.0-hw' }}
+  cancel-in-progress: false
+
+jobs:
+  recover-server-assets:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Recover server bundles from drafts for the same tag
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ inputs.tag || 'v0.40.0-hw' }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          script: |
+            const { createHash } = require('node:crypto');
+            const { owner, repo } = context.repo;
+            const tag = process.env.RELEASE_TAG;
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner, repo, per_page: 100,
+            });
+            const release = releases.find(r => r.tag_name === tag && !r.draft);
+            if (!release) throw new Error(`No published release for ${tag}`);
+
+            const current = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner, repo, release_id: release.id, per_page: 100,
+            });
+            const sources = [];
+            for (const draft of releases.filter(r => r.tag_name === tag && r.draft)) {
+              const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+                owner, repo, release_id: draft.id, per_page: 100,
+              });
+              sources.push({ draft, assets });
+              core.info(`Draft #${draft.id}: ${assets.map(a => a.name).join(', ')}`);
+            }
+
+            async function download(asset) {
+              const response = await fetch(asset.url, {
+                headers: {
+                  Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+                  Accept: 'application/octet-stream',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                },
+              });
+              if (!response.ok) throw new Error(`Downloading ${asset.name}: HTTP ${response.status}`);
+              return Buffer.from(await response.arrayBuffer());
+            }
+
+            const bundles = [
+              'codeg-server-linux-x64.tar.gz',
+              'codeg-server-linux-arm64.tar.gz',
+              'codeg-server-darwin-x64.tar.gz',
+              'codeg-server-darwin-arm64.tar.gz',
+              'codeg-server-windows-x64.zip',
+            ];
+            for (const name of bundles) {
+              const checksumName = `${name}.sha256`;
+              if (current.some(a => a.name === name) && current.some(a => a.name === checksumName)) {
+                core.info(`${name} and checksum already published`);
+                continue;
+              }
+              const candidates = sources.map(({ draft, assets }) => ({
+                draft,
+                bundle: assets.find(a => a.name === name),
+                checksum: assets.find(a => a.name === checksumName),
+              })).filter(c => c.bundle && c.checksum)
+                .sort((a, b) => Date.parse(b.bundle.updated_at) - Date.parse(a.bundle.updated_at));
+              const source = candidates[0];
+              if (!source) throw new Error(`No draft contains ${name} and its checksum`);
+
+              const data = await download(source.bundle);
+              const checksum = await download(source.checksum);
+              const expected = checksum.toString('utf8').trim().split(/\s+/)[0];
+              const actual = createHash('sha256').update(data).digest('hex');
+              if (actual !== expected) throw new Error(`SHA256 mismatch for ${name}`);
+
+              for (const [assetName, bytes] of [[name, data], [checksumName, checksum]]) {
+                const existing = current.find(a => a.name === assetName);
+                if (existing) {
+                  const published = await download(existing);
+                  if (!published.equals(bytes)) throw new Error(`Published ${assetName} differs; refusing to replace it`);
+                  continue;
+                }
+                await github.rest.repos.uploadReleaseAsset({
+                  owner, repo, release_id: release.id, name: assetName, data: bytes,
+                });
+                core.info(`Recovered ${assetName} from draft #${source.draft.id}`);
+              }
+            }
+            core.info(`Server bundles and checksums are complete for ${tag}`);
