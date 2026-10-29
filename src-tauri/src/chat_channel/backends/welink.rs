@@ -626,6 +626,7 @@ fn format_welink_message(message: &RichMessage) -> String {
 
 /// Convert basic markdown formatting to HTML for WeLink.
 /// Handles **bold**, *italic*, `code`, and preserves line breaks.
+#[allow(clippy::while_let_on_iterator)] // inner loops consume extra chars via .next()
 fn markdown_to_html_basic(md: &str) -> String {
     let mut html = String::new();
     let mut chars = md.chars().peekable();
