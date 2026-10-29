@@ -66,6 +66,21 @@ pub fn turn_complete_body(lang: Lang, agent_type: &str) -> String {
     }
 }
 
+pub fn response_label(lang: Lang) -> &'static str {
+    match lang {
+        Lang::ZhCn => "回复",
+        Lang::ZhTw => "回覆",
+        Lang::Ja => "応答",
+        Lang::Ko => "응답",
+        Lang::Es => "Respuesta",
+        Lang::De => "Antwort",
+        Lang::Fr => "Réponse",
+        Lang::Pt => "Resposta",
+        Lang::Ar => "الاستجابة",
+        Lang::En => "Response",
+    }
+}
+
 pub fn stop_reason_label(lang: Lang) -> &'static str {
     match lang {
         Lang::ZhCn => "结束原因",

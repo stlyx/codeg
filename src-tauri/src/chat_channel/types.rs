@@ -161,6 +161,9 @@ pub struct RichMessage {
     pub body: String,
     pub fields: Vec<(String, String)>,
     pub level: MessageLevel,
+    /// Raw markdown/HTML suffix appended after fields, not escaped by backends.
+    /// Used for assistant_text in turn_complete events to preserve formatting.
+    pub raw_suffix: Option<String>,
 }
 
 impl RichMessage {
@@ -170,6 +173,7 @@ impl RichMessage {
             body: body.into(),
             fields: Vec::new(),
             level: MessageLevel::Info,
+            raw_suffix: None,
         }
     }
 
@@ -179,6 +183,7 @@ impl RichMessage {
             body: body.into(),
             fields: Vec::new(),
             level: MessageLevel::Error,
+            raw_suffix: None,
         }
     }
 
@@ -192,6 +197,11 @@ impl RichMessage {
         self
     }
 
+    pub fn with_raw_suffix(mut self, suffix: impl Into<String>) -> Self {
+        self.raw_suffix = Some(suffix.into());
+        self
+    }
+
     pub fn to_plain_text(&self) -> String {
         let mut text = String::new();
         if let Some(title) = &self.title {
@@ -201,6 +211,9 @@ impl RichMessage {
         text.push_str(&self.body);
         for (key, value) in &self.fields {
             text.push_str(&format!("\n{}: {}", key, value));
+        }
+        if let Some(suffix) = &self.raw_suffix {
+            text.push_str(suffix);
         }
         text
     }

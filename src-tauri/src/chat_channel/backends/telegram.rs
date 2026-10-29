@@ -870,6 +870,11 @@ fn format_telegram_markdown(msg: &RichMessage) -> String {
         }
     }
 
+    // Append raw_suffix without escaping (for markdown-formatted assistant_text)
+    if let Some(suffix) = &msg.raw_suffix {
+        text.push_str(suffix);
+    }
+
     text
 }
 
