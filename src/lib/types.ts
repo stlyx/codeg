@@ -3045,6 +3045,7 @@ export type AcpEvent =
       type: "turn_complete"
       session_id: string
       stop_reason: string
+      assistant_text?: string
     }
   | {
       // Synthetic notification-only event (chat-channel "user message" push).
