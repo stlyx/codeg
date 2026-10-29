@@ -679,6 +679,17 @@ fn build_lark_card(msg: &RichMessage) -> serde_json::Value {
         }));
     }
 
+    // Append raw_suffix as markdown element for assistant_text formatting
+    if let Some(suffix) = &msg.raw_suffix {
+        elements.push(serde_json::json!({
+            "tag": "div",
+            "text": {
+                "tag": "lark_md",
+                "content": suffix,
+            },
+        }));
+    }
+
     serde_json::json!({
         "config": { "wide_screen_mode": true },
         "header": {

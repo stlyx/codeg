@@ -20,7 +20,11 @@ pub fn format_turn_complete(
 
     if let Some(text) = assistant_text {
         if !text.trim().is_empty() {
-            msg = msg.with_field("Response", text);
+            // Append assistant_text as raw suffix to avoid escaping.
+            // Format uses markdown syntax which Telegram/Lark support;
+            // WeLink will need to convert the markdown bold to HTML in its formatter.
+            let suffix = format!("\n\n**{}**: {}", i18n::response_label(lang), text);
+            msg = msg.with_raw_suffix(suffix);
         }
     }
 
@@ -280,5 +284,76 @@ mod question_request_tests {
     fn localizes_title_per_language() {
         let msg = format_question_request(&[spec("方式", "选哪个？", &[])], Lang::ZhCn);
         assert_eq!(msg.title.as_deref(), Some("智能体提问"));
+    }
+}
+
+#[cfg(test)]
+mod turn_complete_tests {
+    use super::*;
+
+    #[test]
+    fn includes_localized_response_label_in_raw_suffix() {
+        let msg = format_turn_complete(
+            "Claude Code",
+            "end_turn",
+            Some("Task completed successfully"),
+            Lang::En,
+        );
+        assert_eq!(msg.level, MessageLevel::Info);
+        assert_eq!(msg.title.as_deref(), Some("Turn Complete"));
+        assert!(msg.raw_suffix.is_some());
+        let suffix = msg.raw_suffix.as_ref().unwrap();
+        assert!(suffix.contains("**Response**:"), "got {}", suffix);
+        assert!(suffix.contains("Task completed successfully"), "got {}", suffix);
+    }
+
+    #[test]
+    fn localizes_response_label_per_language() {
+        let msg_cn = format_turn_complete(
+            "Claude Code",
+            "end_turn",
+            Some("完成"),
+            Lang::ZhCn,
+        );
+        assert!(msg_cn.raw_suffix.as_ref().unwrap().contains("**回复**:"));
+
+        let msg_ja = format_turn_complete(
+            "Claude Code",
+            "end_turn",
+            Some("完了"),
+            Lang::Ja,
+        );
+        assert!(msg_ja.raw_suffix.as_ref().unwrap().contains("**応答**:"));
+    }
+
+    #[test]
+    fn preserves_markdown_in_assistant_text() {
+        let msg = format_turn_complete(
+            "Claude Code",
+            "end_turn",
+            Some("I've updated **file.rs** with `new_function()`"),
+            Lang::En,
+        );
+        let suffix = msg.raw_suffix.as_ref().unwrap();
+        // Markdown should be preserved as-is, not escaped
+        assert!(suffix.contains("**file.rs**"), "got {}", suffix);
+        assert!(suffix.contains("`new_function()`"), "got {}", suffix);
+    }
+
+    #[test]
+    fn omits_raw_suffix_when_assistant_text_is_empty() {
+        let msg = format_turn_complete("Claude Code", "end_turn", Some("   "), Lang::En);
+        assert!(msg.raw_suffix.is_none());
+
+        let msg = format_turn_complete("Claude Code", "end_turn", None, Lang::En);
+        assert!(msg.raw_suffix.is_none());
+    }
+
+    #[test]
+    fn includes_stop_reason_field() {
+        let msg = format_turn_complete("Claude Code", "end_turn", None, Lang::En);
+        assert_eq!(msg.fields.len(), 1);
+        assert_eq!(msg.fields[0].0, "Stop Reason");
+        assert_eq!(msg.fields[0].1, "Completed");
     }
 }
