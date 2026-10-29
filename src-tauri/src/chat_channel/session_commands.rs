@@ -1387,6 +1387,7 @@ async fn list_recent_sessions(db: &DatabaseConnection, lang: Lang, prefix: &str)
                 body: e.to_string(),
                 fields: Vec::new(),
                 level: MessageLevel::Error,
+                raw_suffix: None,
             };
         }
     };

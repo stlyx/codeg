@@ -619,6 +619,7 @@ async fn handle_acp_envelope(
                     body,
                     fields: Vec::new(),
                     level: MessageLevel::Warning,
+                    raw_suffix: None,
                 };
                 let _ = manager.send_to_target(&target, &msg).await;
             }
@@ -736,6 +737,7 @@ async fn handle_acp_envelope(
                 body: format!("[{agent_type}] {message}"),
                 fields: Vec::new(),
                 level: MessageLevel::Error,
+                raw_suffix: None,
             };
 
             if !*terminal {

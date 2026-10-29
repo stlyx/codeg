@@ -745,6 +745,7 @@ mod tests {
             body: "An agent is waiting for approval.".into(),
             fields: vec![("Operation".into(), injected.into())],
             level: MessageLevel::Warning,
+            raw_suffix: None,
         };
         let card = build_lark_card(&msg);
 
