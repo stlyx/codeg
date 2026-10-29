@@ -12,7 +12,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Repo = "spacering-net/codeg"
+$Repo = "stlyx/codeg"
 $Artifact = "codeg-server-windows-x64"
 
 # Where the server goes when no -InstallDir is given. Not
