@@ -617,7 +617,92 @@ fn format_welink_message(message: &RichMessage) -> String {
         text.push_str("</b>: ");
         text.push_str(&html_escape_text(value));
     }
+    // Append raw_suffix with basic markdown-to-HTML conversion for assistant_text
+    if let Some(suffix) = &message.raw_suffix {
+        text.push_str(&markdown_to_html_basic(suffix));
+    }
     text
+}
+
+/// Convert basic markdown formatting to HTML for WeLink.
+/// Handles **bold**, *italic*, `code`, and preserves line breaks.
+fn markdown_to_html_basic(md: &str) -> String {
+    let mut html = String::new();
+    let mut chars = md.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '*' if chars.peek() == Some(&'*') => {
+                // **bold**
+                chars.next(); // consume second *
+                let mut bold_text = String::new();
+                let mut found_end = false;
+                while let Some(c) = chars.next() {
+                    if c == '*' && chars.peek() == Some(&'*') {
+                        chars.next(); // consume second *
+                        found_end = true;
+                        break;
+                    }
+                    bold_text.push(c);
+                }
+                if found_end {
+                    html.push_str("<b>");
+                    html.push_str(&html_escape_text(&bold_text));
+                    html.push_str("</b>");
+                } else {
+                    html.push_str("**");
+                    html.push_str(&html_escape_text(&bold_text));
+                }
+            }
+            '*' => {
+                // *italic*
+                let mut italic_text = String::new();
+                let mut found_end = false;
+                while let Some(c) = chars.next() {
+                    if c == '*' {
+                        found_end = true;
+                        break;
+                    }
+                    italic_text.push(c);
+                }
+                if found_end {
+                    html.push_str("<i>");
+                    html.push_str(&html_escape_text(&italic_text));
+                    html.push_str("</i>");
+                } else {
+                    html.push('*');
+                    html.push_str(&html_escape_text(&italic_text));
+                }
+            }
+            '`' => {
+                // `code`
+                let mut code_text = String::new();
+                let mut found_end = false;
+                while let Some(c) = chars.next() {
+                    if c == '`' {
+                        found_end = true;
+                        break;
+                    }
+                    code_text.push(c);
+                }
+                if found_end {
+                    html.push_str("<code>");
+                    html.push_str(&html_escape_text(&code_text));
+                    html.push_str("</code>");
+                } else {
+                    html.push('`');
+                    html.push_str(&html_escape_text(&code_text));
+                }
+            }
+            '<' => html.push_str("&lt;"),
+            '>' => html.push_str("&gt;"),
+            '&' => html.push_str("&amp;"),
+            '"' => html.push_str("&quot;"),
+            '\'' => html.push_str("&#39;"),
+            _ => html.push(ch),
+        }
+    }
+    html
 }
 
 fn split_message(text: &str, limit: usize) -> Vec<String> {
