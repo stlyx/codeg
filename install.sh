@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-REPO="spacering-net/codeg"
+REPO="stlyx/codeg"
 INSTALL_DIR="${CODEG_INSTALL_DIR:-/usr/local/bin}"
 WEB_DIR="${CODEG_WEB_DIR:-/usr/local/share/codeg/web}"
 VERSION=""
