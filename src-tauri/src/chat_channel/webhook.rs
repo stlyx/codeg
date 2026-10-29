@@ -195,6 +195,7 @@ mod tests {
             body: "Claude Code finished its turn.".into(),
             fields: vec![("Stop Reason".into(), "End Turn".into())],
             level: MessageLevel::Info,
+            raw_suffix: None,
         }
     }
 
@@ -287,6 +288,7 @@ mod tests {
             body: "boom".into(),
             fields: vec![],
             level: MessageLevel::Error,
+            raw_suffix: None,
         };
         let payload = build_webhook_payload("error", "c", &err, &SessionContext::default());
         assert_eq!(payload["level"], "error");

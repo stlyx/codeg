@@ -22,6 +22,7 @@ pub async fn handle_search(db: &DatabaseConnection, keyword: &str, lang: Lang) -
                 body: e.to_string(),
                 fields: Vec::new(),
                 level: MessageLevel::Error,
+                raw_suffix: None,
             };
         }
     };
@@ -64,6 +65,7 @@ pub async fn handle_today(db: &DatabaseConnection, lang: Lang) -> RichMessage {
                 body: e.to_string(),
                 fields: Vec::new(),
                 level: MessageLevel::Error,
+                raw_suffix: None,
             };
         }
     };
