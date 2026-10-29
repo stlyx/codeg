@@ -517,6 +517,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+            assistant_text: None,
         });
         writer
             .write_meta(
