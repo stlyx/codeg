@@ -3,15 +3,28 @@ use super::tool_detail;
 use super::types::{MessageLevel, RichMessage};
 use crate::acp::question::QuestionSpec;
 
-pub fn format_turn_complete(agent_type: &str, stop_reason: &str, lang: Lang) -> RichMessage {
+pub fn format_turn_complete(
+    agent_type: &str,
+    stop_reason: &str,
+    assistant_text: Option<&str>,
+    lang: Lang,
+) -> RichMessage {
     let reason = match stop_reason {
         "end_turn" => i18n::stop_reason_end_turn(lang),
         "cancelled" => i18n::stop_reason_cancelled(lang),
         _ => stop_reason,
     };
-    RichMessage::info(i18n::turn_complete_body(lang, agent_type))
+    let mut msg = RichMessage::info(i18n::turn_complete_body(lang, agent_type))
         .with_title(i18n::turn_complete_title(lang))
-        .with_field(i18n::stop_reason_label(lang), reason)
+        .with_field(i18n::stop_reason_label(lang), reason);
+
+    if let Some(text) = assistant_text {
+        if !text.trim().is_empty() {
+            msg = msg.with_field("Response", text);
+        }
+    }
+
+    msg
 }
 
 pub fn format_agent_error(agent_type: &str, message: &str, lang: Lang) -> RichMessage {

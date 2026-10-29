@@ -10103,6 +10103,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+            assistant_text: None,
         });
         // A next turn re-sets the flag, exactly as `send_prompt_inner` does.
         state.write().await.turn_in_flight = true;

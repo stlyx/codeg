@@ -27,6 +27,38 @@ use crate::acp::types::{
 use crate::models::agent::AgentType;
 use crate::models::message::MessageRole;
 
+/// Extract assistant text from a live message for TurnComplete events.
+/// Returns the concatenated text content after the last tool call.
+pub fn extract_assistant_text(live: &LiveMessage) -> Option<String> {
+    let after_last_tool_call = live
+        .content
+        .iter()
+        .rposition(|b| matches!(b, LiveContentBlock::ToolCallRef { .. }))
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let assembled: String = live.content[after_last_tool_call..]
+        .iter()
+        .filter_map(|b| match b {
+            // Main-thread text only: a subagent's trailing
+            // prose (parented blocks, claude-agent-acp ≥0.63
+            // subagent transcripts) is the CHILD's voice and
+            // must never read as the parent's delegation
+            // result.
+            LiveContentBlock::Text {
+                text,
+                parent_tool_use_id: None,
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<&str>>()
+        .join("");
+    if !assembled.trim().is_empty() {
+        Some(assembled)
+    } else {
+        None
+    }
+}
+
 /// 当前 streaming 中的 turn 的累积内容。turn 完成后清空。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LiveMessage {
@@ -1380,30 +1412,8 @@ impl SessionState {
                     self.last_turn_progress = self.turn_progress();
                 }
                 if let Some(live) = self.live_message.as_ref() {
-                    let after_last_tool_call = live
-                        .content
-                        .iter()
-                        .rposition(|b| matches!(b, LiveContentBlock::ToolCallRef { .. }))
-                        .map(|i| i + 1)
-                        .unwrap_or(0);
-                    let assembled: String = live.content[after_last_tool_call..]
-                        .iter()
-                        .filter_map(|b| match b {
-                            // Main-thread text only: a subagent's trailing
-                            // prose (parented blocks, claude-agent-acp ≥0.63
-                            // subagent transcripts) is the CHILD's voice and
-                            // must never read as the parent's delegation
-                            // result.
-                            LiveContentBlock::Text {
-                                text,
-                                parent_tool_use_id: None,
-                            } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<Vec<&str>>()
-                        .join("");
-                    if !assembled.trim().is_empty() {
-                        self.last_assistant_text = Some(assembled);
+                    if let Some(text) = extract_assistant_text(live) {
+                        self.last_assistant_text = Some(text);
                     }
                 }
                 self.live_message = None;
@@ -2870,6 +2880,7 @@ mod tests {
             session_id: "sid".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert!(s.session_failures["t1:error"].resolved);
         assert!(!s.session_failures["s:notice"].resolved);
@@ -3134,6 +3145,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "cancelled".into(),
             agent_type: "grok".into(),
+        assistant_text: None,
         });
         assert!(s.turn_in_flight, "the admitted prompt still owns the gate");
         assert!(!s.agent_initiated_turn);
@@ -3147,6 +3159,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "grok".into(),
+        assistant_text: None,
         });
         assert!(!s.turn_in_flight);
     }
@@ -3193,6 +3206,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+        assistant_text: None,
         });
         assert_eq!(s.last_assistant_text.as_deref(), Some("You're welcome."));
     }
@@ -3218,6 +3232,7 @@ mod tests {
                 session_id: "sid".into(),
                 stop_reason: stop_reason.into(),
                 agent_type: "claude_code".into(),
+            assistant_text: None,
             }
         }
         let mut s = fresh_state();
@@ -3327,6 +3342,7 @@ mod tests {
             session_id: "sid".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert!(s.session_failures["notice"].resolved);
         assert!(!s.session_failures["err"].resolved);
@@ -3345,6 +3361,7 @@ mod tests {
             session_id: "sid".into(),
             stop_reason: "end_turn".into(),
             agent_type: "grok".into(),
+        assistant_text: None,
         });
         assert!(s.pending_plan_approval.is_none());
     }
@@ -3491,6 +3508,7 @@ mod tests {
             session_id: "sess".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+        assistant_text: None,
         });
         assert!(
             s.pending_user_message.is_none(),
@@ -3876,6 +3894,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert!(s.active_tool_calls.is_empty());
         assert_eq!(s.turn_progress(), None);
@@ -3885,6 +3904,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert!(s.delegation_progress().is_some());
     }
@@ -4336,6 +4356,7 @@ mod tests {
             session_id: "sess-1".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+        assistant_text: None,
         });
         assert_eq!(s.last_assistant_text.as_deref(), Some("final answer"));
     }
@@ -4774,6 +4795,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+        assistant_text: None,
         });
         assert!(s.live_message.is_none());
         assert!(s.active_tool_calls.is_empty());
@@ -4867,6 +4889,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+        assistant_text: None,
         });
 
         assert!(
@@ -4985,6 +5008,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert_eq!(s.last_assistant_text.as_deref(), Some("the answer is 42"));
     }
@@ -5012,6 +5036,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert_eq!(s.last_assistant_text.as_deref(), Some("part 1 part 2"));
     }
@@ -5039,6 +5064,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert_eq!(s.last_assistant_text, None);
     }
@@ -5074,6 +5100,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert_eq!(s.last_assistant_text.as_deref(), Some("the answer is 42"));
     }
@@ -5102,6 +5129,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert_eq!(s.last_assistant_text, None);
     }
@@ -5126,6 +5154,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         });
         assert_eq!(s.last_assistant_text, None);
     }
@@ -5151,6 +5180,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "cancelled".into(),
             agent_type: "codex".into(),
+        assistant_text: None,
         };
         s.apply_event(&complete);
         assert_eq!(s.last_assistant_text.as_deref(), Some("the answer"));
@@ -5272,6 +5302,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+        assistant_text: None,
         });
         let ids: Vec<_> = s
             .tool_approvals
@@ -5962,6 +5993,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+        assistant_text: None,
         });
         // The existing `live_message = None` clear handles the new block kinds
         // automatically — they live inside live_message, not as siblings.
