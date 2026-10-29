@@ -53,7 +53,7 @@ use crate::acp::file_system_runtime::{
 };
 use crate::acp::host_tools_policy::{HostToolsPolicy, HOST_TOOLS_ENV};
 use crate::acp::registry::{self, AgentDistribution};
-use crate::acp::session_state::SessionState;
+use crate::acp::session_state::{extract_assistant_text, SessionState};
 use crate::acp::stderr_tail::{summarize_parser_error, StderrTail, TailScope};
 use crate::acp::terminal_runtime::{
     TerminalRuntime, TerminalRuntimeError, TerminalShellRuntimeConfig,
@@ -66,6 +66,7 @@ use crate::acp::types::{
     SessionConfigOptionInfo, SessionConfigSelectGroupInfo, SessionConfigSelectInfo,
     SessionConfigSelectOptionInfo, SessionFailureRecord, SessionModeInfo, SessionModeStateInfo,
     SessionNotice, ToolApprovalInfo, ToolCallImageInfo, UserMessageBlock,
+    MAX_ASSISTANT_TEXT_PREVIEW,
 };
 use crate::logging::throttle::LeadingEdgeThrottle;
 use crate::models::agent::AgentType;
@@ -3879,6 +3880,18 @@ async fn drain_permissions_on_stop_then_emit<R: PermissionResponder>(
         emit_with_state(state, emitter, closing).await;
     }
     emit_with_state(state, emitter, follow_up).await;
+}
+
+/// Truncate string to a maximum byte length, cutting at a UTF-8 character boundary.
+fn truncate_to_byte_limit(s: String, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].to_string()
 }
 
 /// Shared body of the drains above. Emits the compensating
@@ -14993,6 +15006,15 @@ async fn run_conversation_loop(
                                     // Same wedge guard as the normal turn exit
                                     // below — see there for why the drain and the
                                     // event must share one critical section.
+                                    let assistant_text = if reason_str == "end_turn" {
+                                        let s = state.read().await;
+                                        s.live_message
+                                            .as_ref()
+                                            .and_then(extract_assistant_text)
+                                            .map(|t| truncate_to_byte_limit(t, MAX_ASSISTANT_TEXT_PREVIEW))
+                                    } else {
+                                        None
+                                    };
                                     drain_permissions_then_emit(
                                         perms,
                                         state,
@@ -15001,6 +15023,7 @@ async fn run_conversation_loop(
                                             session_id: sid.0.to_string(),
                                             stop_reason: reason_str.into(),
                                             agent_type: agent_type.to_string(),
+                                            assistant_text,
                                         },
                                     )
                                     .await;
@@ -15126,6 +15149,15 @@ async fn run_conversation_loop(
                             // permission on this connection from displaying. A
                             // no-op on the normal path (an agent blocked on
                             // approval does not end its turn).
+                            let assistant_text = if reason_str == "end_turn" {
+                                let s = state.read().await;
+                                s.live_message
+                                    .as_ref()
+                                    .and_then(extract_assistant_text)
+                                    .map(|t| truncate_to_byte_limit(t, MAX_ASSISTANT_TEXT_PREVIEW))
+                            } else {
+                                None
+                            };
                             drain_permissions_then_emit(
                                 perms,
                                 state,
@@ -15134,6 +15166,7 @@ async fn run_conversation_loop(
                                     session_id: sid.0.to_string(),
                                     stop_reason: reason_str.into(),
                                     agent_type: agent_type.to_string(),
+                                    assistant_text,
                                 },
                             )
                             .await;
@@ -15450,6 +15483,7 @@ async fn run_conversation_loop(
                                     // permission requests gated are closed
                                     // here for an agent that leaves them open
                                     // (see `stopped_call_reports`).
+                                    // Cancelled turns don't get assistant_text.
                                     drain_permissions_on_stop_then_emit(
                                         perms,
                                         state,
@@ -15459,6 +15493,7 @@ async fn run_conversation_loop(
                                             session_id: sid.0.to_string(),
                                             stop_reason: "cancelled".into(),
                                             agent_type: agent_type.to_string(),
+                                            assistant_text: None,
                                         },
                                     )
                                     .await;
@@ -23723,6 +23758,15 @@ async fn close_grok_agent_turn(
     if let Some(error) = turn_failure_error_event(stop_reason, agent_type, None) {
         emit_with_state(state, emitter, error).await;
     }
+    let assistant_text = if stop_reason == "end_turn" {
+        let s = state.read().await;
+        s.live_message
+            .as_ref()
+            .and_then(extract_assistant_text)
+            .map(|t| truncate_to_byte_limit(t, MAX_ASSISTANT_TEXT_PREVIEW))
+    } else {
+        None
+    };
     drain_permissions_then_emit(
         perms,
         state,
@@ -23731,6 +23775,7 @@ async fn close_grok_agent_turn(
             session_id: session_id.to_string(),
             stop_reason: stop_reason.to_string(),
             agent_type: agent_type.to_string(),
+            assistant_text,
         },
     )
     .await;
@@ -26528,6 +26573,7 @@ mod tests {
             session_id: "s1".to_string(),
             stop_reason: "end_turn".to_string(),
             agent_type: "minimax_code".to_string(),
+        assistant_text: None,
         });
         assert!(guard.permission_matched_calls.is_empty());
     }
