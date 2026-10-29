@@ -40,6 +40,7 @@ pub fn format_agent_error(agent_type: &str, message: &str, lang: Lang) -> RichMe
             message.to_string(),
         )],
         level: MessageLevel::Error,
+        raw_suffix: None,
     }
 }
 
@@ -80,6 +81,7 @@ pub fn format_permission_request(tool_call: &serde_json::Value, lang: Lang) -> R
             tool_desc,
         )],
         level: MessageLevel::Warning,
+        raw_suffix: None,
     }
 }
 
@@ -124,6 +126,7 @@ pub fn format_question_request(questions: &[QuestionSpec], lang: Lang) -> RichMe
         body: i18n::question_request_body(lang).to_string(),
         fields,
         level: MessageLevel::Warning,
+        raw_suffix: None,
     }
 }
 
