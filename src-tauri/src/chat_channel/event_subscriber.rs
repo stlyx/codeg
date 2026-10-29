@@ -622,6 +622,7 @@ fn parse_acp_event(payload: &AcpEvent, lang: Lang) -> Option<(String, RichMessag
         AcpEvent::TurnComplete {
             stop_reason,
             agent_type,
+            assistant_text,
             ..
         } => {
             // Only push for end_turn, not for intermediate completions.
@@ -630,7 +631,12 @@ fn parse_acp_event(payload: &AcpEvent, lang: Lang) -> Option<(String, RichMessag
             }
             Some((
                 "turn_complete".to_string(),
-                message_formatter::format_turn_complete(agent_type, stop_reason, lang),
+                message_formatter::format_turn_complete(
+                    agent_type,
+                    stop_reason,
+                    assistant_text.as_deref(),
+                    lang,
+                ),
             ))
         }
         AcpEvent::Error {
@@ -798,6 +804,7 @@ mod permission_push_tests {
                 session_id: "s".into(),
                 stop_reason: "end_turn".into(),
                 agent_type: "claude_code".into(),
+            assistant_text: None,
             },
         }
     }
@@ -1078,6 +1085,7 @@ mod permission_push_tests {
                 session_id: "s".into(),
                 stop_reason: "end_turn".into(),
                 agent_type: "claude_code".into(),
+            assistant_text: None,
             },
         };
         process_envelope(
@@ -1126,6 +1134,7 @@ mod permission_push_tests {
                 session_id: "s".into(),
                 stop_reason: "end_turn".into(),
                 agent_type: "claude_code".into(),
+            assistant_text: None,
             },
         };
         process_envelope(
