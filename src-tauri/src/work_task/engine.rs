@@ -15190,6 +15190,7 @@ mod tests {
                 session_id: "s-1".into(),
                 stop_reason: "end_turn".into(),
                 agent_type: "claude_code".into(),
+                assistant_text: None,
             },
         )));
 
@@ -17537,6 +17538,7 @@ mod tests {
                     session_id: "sess".to_string(),
                     stop_reason: stop_reason.to_string(),
                     agent_type: AgentType::ClaudeCode.to_string(),
+                    assistant_text: None,
                 },
             }));
         }
@@ -17679,6 +17681,7 @@ mod tests {
                 session_id: "sess".to_string(),
                 stop_reason: stop_reason.to_string(),
                 agent_type: AgentType::ClaudeCode.to_string(),
+            assistant_text: None,
             },
         }
     }
