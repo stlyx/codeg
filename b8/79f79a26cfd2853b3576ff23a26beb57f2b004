@@ -1,0 +1,57 @@
+src/i18n/messages/en.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4526,4528-4534,4542-4544
+src-tauri/src/chat_channel/session_event_subscriber.rs
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 325-334,636-646,820-823
+package.json
+  s_fc4ce5dd71170d::t_c3d0aae1af8a83 4
+src/components/settings/edit-chat-channel-dialog.tsx
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 10,51-63,86-90,94-107,115-125,156-160,201-203,216-217,252-312,365-379
+src/i18n/messages/pt.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4506,4508-4514,4522-4524
+src-tauri/Cargo.toml
+  s_fc4ce5dd71170d::t_c3d0aae1af8a83 3
+src/i18n/messages/zh-TW.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4506,4508-4514,4522-4524
+src/lib/types.ts
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 5315
+src/i18n/messages/ar.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4506,4508-4514,4522-4524
+src-tauri/tauri.conf.json
+  s_fc4ce5dd71170d::t_c3d0aae1af8a83 4
+src/i18n/messages/es.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4506,4508-4514,4522-4524
+src-tauri/src/chat_channel/types.rs
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 8,32-53,59
+src-tauri/src/chat_channel/backends/welink.rs
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 1-962
+src-tauri/src/chat_channel/backends/mod.rs
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4,66-80
+src/i18n/messages/ko.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4506,4508-4514,4522-4524
+src/i18n/messages/fr.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4506,4508-4514,4522-4524
+src/components/settings/add-chat-channel-dialog.tsx
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 9,51-55,68-72,95-98,102-115,123-133,164-168,205,225-229,236-240,246,279-339,391-396
+src/i18n/messages/ja.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4506,4508-4514,4522-4524
+src/i18n/messages/zh-CN.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4526,4528-4534,4542-4544
+src/i18n/messages/de.json
+  s_fc4ce5dd71170d::t_8e484b2433a9b6 4506,4508-4514,4522-4524
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b879f79a26cfd2853b3576ff23a26beb57f2b004",
+  "prompts": {},
+  "sessions": {
+    "s_fc4ce5dd71170d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18cbd-f25f-7623-b665-7fada76735d2",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "stlyx <3462584+stlyx@users.noreply.github.com>"
+    }
+  }
+}
