@@ -26705,6 +26705,7 @@ mod tests {
                 session_id: "s1".to_string(),
                 stop_reason: "cancelled".to_string(),
                 agent_type: agent_type.to_string(),
+                assistant_text: None,
             },
         )
         .await;
