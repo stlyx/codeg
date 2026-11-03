@@ -32,6 +32,12 @@ src/i18n/messages/zh-CN.json
   s_fc4ce5dd71170d::t_8e484b2433a9b6 4517,4519-4525,4533-4535
 src/i18n/messages/de.json
   s_fc4ce5dd71170d::t_8e484b2433a9b6 4497,4499-4505,4513-4515
+src-tauri/Cargo.toml
+  s_3a27e18b0c49e7::t_5c1ba74d909c10 3
+src-tauri/tauri.conf.json
+  s_3a27e18b0c49e7::t_5c1ba74d909c10 4
+package.json
+  s_3a27e18b0c49e7::t_5c1ba74d909c10 4
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -39,6 +45,14 @@ src/i18n/messages/de.json
   "base_commit_sha": "2e341862bfd0e8cb55e0896472eb4d64d4219ee6",
   "prompts": {},
   "sessions": {
+    "s_3a27e18b0c49e7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "40fd4f68-ff84-44d7-90a0-ec709ba26fc8",
+        "model": "anthropic/claude-fable-5.1"
+      },
+      "human_author": "stlyx <3462584+stlyx@users.noreply.github.com>"
+    },
     "s_fc4ce5dd71170d": {
       "agent_id": {
         "tool": "codex",
