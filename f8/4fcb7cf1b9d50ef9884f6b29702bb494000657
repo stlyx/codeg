@@ -32,6 +32,12 @@ src/i18n/messages/zh-CN.json
   s_fc4ce5dd71170d::t_8e484b2433a9b6 4534,4536-4542,4550-4552
 src/i18n/messages/de.json
   s_fc4ce5dd71170d::t_8e484b2433a9b6 4514,4516-4522,4530-4532
+src-tauri/Cargo.toml
+  s_ec66aeeeade3b4::t_a4429bfa098b69 3
+package.json
+  s_ec66aeeeade3b4::t_a4429bfa098b69 4
+src-tauri/tauri.conf.json
+  s_ec66aeeeade3b4::t_a4429bfa098b69 4
 ---
 {
   "schema_version": "authorship/3.0.0",
@@ -46,6 +52,14 @@ src/i18n/messages/de.json
         "model": "anthropic/claude-fable-5.1"
       },
       "human_author": "stlyx <3462584+stlyx@users.noreply.github.com>"
+    },
+    "s_ec66aeeeade3b4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b2ef078e-f54f-4d07-9e5b-f138357940bf",
+        "model": "anthropic/claude-fable-5.1"
+      },
+      "human_author": "xintaofei <xintaofei@users.noreply.github.com>"
     },
     "s_fc4ce5dd71170d": {
       "agent_id": {
