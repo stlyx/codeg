@@ -1,0 +1,19 @@
+src-tauri/src/acp/connection.rs
+  s_fc4ce5dd71170d::t_fbd97f76aede7d 56,69,3885-3896,15307-15315,15324,15450-15458,15467,15784,15794,24522-24530,24539,27336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b3ad880f038ed3d9bf73af6d429b9e63eaf2009c",
+  "prompts": {},
+  "sessions": {
+    "s_fc4ce5dd71170d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a18cbd-f25f-7623-b665-7fada76735d2",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "stlyx <3462584+stlyx@users.noreply.github.com>"
+    }
+  }
+}
