@@ -148,14 +148,19 @@ jobs:
 
       - name: Configure Linux desktop linker and build concurrency
         # The desktop cell compiles `codeg_lib` twice (rlib + unit-test build)
-        # and links all 5 bins + 24 integration tests. At default concurrency
-        # with GNU ld, peak memory exceeds the 16 GB ubuntu-22.04 runner and
-        # triggers a runner shutdown (exit code 143). Set before rust-cache so
+        # and links all 5 bins + 24 integration tests. Even at `-j 2`, two
+        # concurrent `codeg_lib` rustc invocations exceed the 16 GB ubuntu-22.04
+        # runner and trigger a runner shutdown (exit code 143). Running with
+        # `-j 1`, `debug=0`, and `lld` keeps only one `codeg_lib` compilation in
+        # memory at a time and cuts linker RAM/time. Set before rust-cache so
         # cache restore, save, cargo test, and cargo clippy share one config.
         if: matrix.os == 'ubuntu-22.04' && matrix.mode == 'desktop'
         run: |
+          free -h
           echo "RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
-          echo "CARGO_BUILD_JOBS=2" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_DEV_DEBUG=0" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_TEST_DEBUG=0" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_JOBS=1" >> "$GITHUB_ENV"
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
