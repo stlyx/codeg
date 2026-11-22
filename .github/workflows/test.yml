@@ -126,6 +126,17 @@ jobs:
         with:
           components: clippy
 
+      - name: Configure Linux desktop linker and build concurrency
+        # The desktop cell compiles `codeg_lib` twice (rlib + unit-test build)
+        # and links all 5 bins + 24 integration tests. At default concurrency
+        # with GNU ld, peak memory exceeds the 16 GB ubuntu-22.04 runner and
+        # triggers a runner shutdown (exit code 143). Set before rust-cache so
+        # cache restore, save, cargo test, and cargo clippy share one config.
+        if: matrix.os == 'ubuntu-22.04' && matrix.mode == 'desktop'
+        run: |
+          echo "RUSTFLAGS=-C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_JOBS=2" >> "$GITHUB_ENV"
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -135,13 +146,15 @@ jobs:
       - name: Install Linux desktop dependencies
         # Only the Linux desktop build needs webkit/appindicator. Windows
         # ships WebView2 with the OS; macOS uses WKWebView from the SDK.
+        # `lld` is required by the `-fuse-ld=lld` flag configured above.
         if: matrix.os == 'ubuntu-22.04' && matrix.mode == 'desktop'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
-            librsvg2-dev
+            librsvg2-dev \
+            lld
 
       - name: Prepare Tauri frontendDist placeholder
         # Tauri's build script validates `frontendDist` and bundled resource
