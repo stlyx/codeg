@@ -5268,6 +5268,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+            assistant_text: None,
         });
         assert_eq!(
             s.delegated_children.iter().collect::<Vec<_>>(),
@@ -5584,6 +5585,7 @@ mod tests {
             session_id: "ext".into(),
             stop_reason: "end_turn".into(),
             agent_type: "claude_code".into(),
+            assistant_text: None,
         };
         s.apply_event(&complete);
         let stamped = s.last_turn_completed_at.expect("stamped");

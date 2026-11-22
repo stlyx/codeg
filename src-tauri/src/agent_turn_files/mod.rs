@@ -670,6 +670,7 @@ mod tests {
             session_id: "s".into(),
             stop_reason: stop_reason.into(),
             agent_type: "claude_code".into(),
+            assistant_text: None,
         }
     }
 
