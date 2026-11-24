@@ -1,8 +1,9 @@
 use crate::app_error::AppCommandError;
 use crate::chat_channel::backends::weixin::{WeixinQrcodeInfo, WeixinQrcodeStatusPublic};
 use crate::chat_channel::manager::ChatChannelManager;
-use crate::chat_channel::types::ChannelType;
+use crate::chat_channel::types::{default_welink_assistant_name, ChannelType, WelinkConfig};
 use crate::chat_channel::webhook::WebhookConfig;
+use crate::chat_channel::welink::register::{WelinkRegisterInfo, WelinkRegisterStatusPublic};
 use crate::db::service::{chat_channel_message_log_service, chat_channel_service};
 use crate::db::AppDatabase;
 use crate::models::chat_channel::{ChannelStatusInfo, ChatChannelInfo, ChatChannelMessageLogInfo};
@@ -482,6 +483,144 @@ pub async fn weixin_check_qrcode_core(
 }
 
 // ---------------------------------------------------------------------------
+// WeLink PC/QR link registration auth
+// ---------------------------------------------------------------------------
+
+pub async fn welink_get_register_url_core(
+    db: &AppDatabase,
+    channel_id: Option<i32>,
+    gateway_url: Option<&str>,
+    assistant_name: Option<&str>,
+) -> Result<WelinkRegisterInfo, AppCommandError> {
+    let db_cfg = if let Some(id) = channel_id {
+        let model = chat_channel_service::get_by_id(&db.conn, id)
+            .await
+            .map_err(AppCommandError::from)?
+            .ok_or_else(|| AppCommandError::not_found(format!("Chat channel {id} not found")))?;
+        serde_json::from_str::<WelinkConfig>(&model.config_json).ok()
+    } else {
+        None
+    };
+
+    let resolved_gateway = gateway_url
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| {
+            db_cfg
+                .as_ref()
+                .map(|c| c.gateway_url.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .ok_or_else(|| AppCommandError::configuration_invalid("gateway_url is required"))?;
+
+    let resolved_channel = assistant_name
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| {
+            db_cfg
+                .as_ref()
+                .map(|c| c.assistant_name.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(default_welink_assistant_name);
+
+    crate::chat_channel::welink::register::apply_register_url(&resolved_gateway, &resolved_channel)
+        .await
+        .map_err(AppCommandError::from)
+}
+
+pub async fn welink_check_register_status_core(
+    db: &AppDatabase,
+    channel_id: i32,
+    qrcode: &str,
+    access_token: &str,
+    gateway_url: Option<&str>,
+) -> Result<WelinkRegisterStatusPublic, AppCommandError> {
+    let model = chat_channel_service::get_by_id(&db.conn, channel_id)
+        .await
+        .map_err(AppCommandError::from)?
+        .ok_or_else(|| AppCommandError::not_found(format!("Chat channel {channel_id} not found")))?;
+
+    let existing_json: serde_json::Value =
+        serde_json::from_str(&model.config_json).unwrap_or_else(|_| serde_json::json!({}));
+
+    let resolved_gateway = gateway_url
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .or_else(|| {
+            existing_json
+                .get("gateway_url")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(String::from)
+        })
+        .ok_or_else(|| AppCommandError::configuration_invalid("gateway_url is required"))?;
+
+    let result = crate::chat_channel::welink::register::check_register_status(
+        &resolved_gateway,
+        qrcode,
+        access_token,
+    )
+    .await
+    .map_err(AppCommandError::from)?;
+
+    if result.status == "confirmed" {
+        if let Some(ref sk) = result.sk {
+            save_chat_channel_token_core(channel_id, sk)?;
+            tracing::info!("[WeLink] SK saved to keyring for channel {channel_id}");
+        } else {
+            tracing::warn!(
+                "[WeLink] WARNING: No sk in confirmed response for channel {channel_id}"
+            );
+        }
+
+        // Merge ak into existing config_json so user-configured fields like gateway_url
+        // and device_name are preserved intact.
+        let mut merged = match existing_json {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        if let Some(ref ak) = result.ak {
+            merged.insert("ak".to_string(), serde_json::Value::String(ak.clone()));
+        }
+        let has_assistant_name = merged
+            .get("assistant_name")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.trim().is_empty());
+        if !has_assistant_name {
+            if let Some(ref name) = result.assistant_name {
+                merged.insert(
+                    "assistant_name".to_string(),
+                    serde_json::Value::String(name.clone()),
+                );
+            }
+        }
+        let config_json = serde_json::Value::Object(merged).to_string();
+        update_chat_channel_core(
+            db,
+            channel_id,
+            None,
+            None,
+            Some(config_json),
+            None,
+            None,
+            None,
+        )
+        .await?;
+        tracing::info!("[WeLink] Config updated with ak for channel {channel_id}");
+    }
+
+    // Return only the status — never expose ak/sk to the frontend.
+    Ok(WelinkRegisterStatusPublic {
+        status: result.status,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Tauri commands (use tauri::State for injection)
 // ---------------------------------------------------------------------------
 
@@ -721,6 +860,42 @@ pub async fn weixin_check_qrcode(
     weixin_check_qrcode_core(&db, channel_id, &qrcode).await
 }
 
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+pub async fn welink_get_register_url(
+    db: tauri::State<'_, AppDatabase>,
+    channel_id: Option<i32>,
+    gateway_url: Option<String>,
+    assistant_name: Option<String>,
+) -> Result<WelinkRegisterInfo, AppCommandError> {
+    welink_get_register_url_core(
+        &db,
+        channel_id,
+        gateway_url.as_deref(),
+        assistant_name.as_deref(),
+    )
+    .await
+}
+
+#[cfg(feature = "tauri-runtime")]
+#[tauri::command]
+pub async fn welink_check_register_status(
+    db: tauri::State<'_, AppDatabase>,
+    channel_id: i32,
+    qrcode: String,
+    access_token: String,
+    gateway_url: Option<String>,
+) -> Result<WelinkRegisterStatusPublic, AppCommandError> {
+    welink_check_register_status_core(
+        &db,
+        channel_id,
+        &qrcode,
+        &access_token,
+        gateway_url.as_deref(),
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -952,5 +1127,63 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn create_welink_channel_and_require_gateway_for_register() {
+        let db = fresh_in_memory_db().await;
+        let created = create_chat_channel_core(
+            &db,
+            "My WeLink".to_string(),
+            "welink".to_string(),
+            serde_json::json!({
+                "assistant_name": "codeagent",
+                "gateway_url": "",
+                "ak": ""
+            })
+            .to_string(),
+            true,
+            false,
+            None,
+        )
+        .await
+        .expect("create welink channel");
+        assert_eq!(created.channel_type, "welink");
+
+        // Missing gateway_url must be rejected before making any network call
+        let err = welink_get_register_url_core(&db, Some(created.id), None, None)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("gateway_url"));
+
+        // Backend factory must reject missing gateway_url, ak, or sk
+        assert!(crate::chat_channel::backends::create_backend(
+            created.id,
+            ChannelType::Welink,
+            &serde_json::json!({ "gateway_url": "", "ak": "ak" }),
+            "sk".into(),
+        )
+        .is_err());
+        assert!(crate::chat_channel::backends::create_backend(
+            created.id,
+            ChannelType::Welink,
+            &serde_json::json!({ "gateway_url": "api.inner.welink.example.com", "ak": "" }),
+            "sk".into(),
+        )
+        .is_err());
+        assert!(crate::chat_channel::backends::create_backend(
+            created.id,
+            ChannelType::Welink,
+            &serde_json::json!({ "gateway_url": "api.inner.welink.example.com", "ak": "ak" }),
+            "".into(),
+        )
+        .is_err());
+        assert!(crate::chat_channel::backends::create_backend(
+            created.id,
+            ChannelType::Welink,
+            &serde_json::json!({ "gateway_url": "api.inner.welink.example.com", "ak": "ak" }),
+            "sk".into(),
+        )
+        .is_ok());
     }
 }

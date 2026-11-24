@@ -1810,6 +1810,14 @@ pub fn build_router_with_srn(
             "/weixin_check_qrcode",
             post(handlers::chat_channel::weixin_check_qrcode),
         )
+        .route(
+            "/welink_get_register_url",
+            post(handlers::chat_channel::welink_get_register_url),
+        )
+        .route(
+            "/welink_check_register_status",
+            post(handlers::chat_channel::welink_check_register_status),
+        )
         // ─── Model Providers ───
         .route(
             "/list_model_providers",

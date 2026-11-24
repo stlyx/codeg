@@ -5704,6 +5704,37 @@ export async function weixinCheckQrcode(
   return getTransport().call("weixin_check_qrcode", { channelId, qrcode })
 }
 
+// ─── Welink Register Auth ───
+
+export async function welinkGetRegisterUrl(params?: {
+  channelId?: number
+  gatewayUrl?: string
+  assistantName?: string
+}): Promise<{
+  pcUrl: string
+  qrcode: string
+  accessToken: string
+  expireTime: string
+}> {
+  return getTransport().call("welink_get_register_url", params ?? {})
+}
+
+export async function welinkCheckRegisterStatus(
+  channelId: number,
+  qrcode: string,
+  accessToken: string,
+  gatewayUrl?: string
+): Promise<{
+  status: string
+}> {
+  return getTransport().call("welink_check_register_status", {
+    channelId,
+    qrcode,
+    accessToken,
+    ...(gatewayUrl ? { gatewayUrl } : {}),
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Model Providers
 // ---------------------------------------------------------------------------

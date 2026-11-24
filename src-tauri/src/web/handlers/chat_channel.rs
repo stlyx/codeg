@@ -7,6 +7,7 @@ use crate::app_error::AppCommandError;
 use crate::app_state::AppState;
 use crate::chat_channel::backends::weixin::{WeixinQrcodeInfo, WeixinQrcodeStatusPublic};
 use crate::chat_channel::webhook::WebhookConfig;
+use crate::chat_channel::welink::register::{WelinkRegisterInfo, WelinkRegisterStatusPublic};
 use crate::commands::chat_channel as cc_commands;
 use crate::models::chat_channel::{ChannelStatusInfo, ChatChannelInfo, ChatChannelMessageLogInfo};
 
@@ -313,5 +314,60 @@ pub async fn weixin_check_qrcode(
 ) -> Result<Json<WeixinQrcodeStatusPublic>, AppCommandError> {
     let result =
         cc_commands::weixin_check_qrcode_core(&state.db, params.channel_id, &params.qrcode).await?;
+    Ok(Json(result))
+}
+
+// ---------------------------------------------------------------------------
+// WeLink PC/QR link registration auth
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct WelinkGetRegisterUrlParams {
+    #[serde(default)]
+    pub channel_id: Option<i32>,
+    #[serde(default)]
+    pub gateway_url: Option<String>,
+    #[serde(default)]
+    pub assistant_name: Option<String>,
+}
+
+pub async fn welink_get_register_url(
+    Extension(state): Extension<Arc<AppState>>,
+    params: Option<Json<WelinkGetRegisterUrlParams>>,
+) -> Result<Json<WelinkRegisterInfo>, AppCommandError> {
+    let params = params.map(|Json(p)| p).unwrap_or_default();
+    let result = cc_commands::welink_get_register_url_core(
+        &state.db,
+        params.channel_id,
+        params.gateway_url.as_deref(),
+        params.assistant_name.as_deref(),
+    )
+    .await?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WelinkCheckRegisterStatusParams {
+    pub channel_id: i32,
+    pub qrcode: String,
+    pub access_token: String,
+    #[serde(default)]
+    pub gateway_url: Option<String>,
+}
+
+pub async fn welink_check_register_status(
+    Extension(state): Extension<Arc<AppState>>,
+    Json(params): Json<WelinkCheckRegisterStatusParams>,
+) -> Result<Json<WelinkRegisterStatusPublic>, AppCommandError> {
+    let result = cc_commands::welink_check_register_status_core(
+        &state.db,
+        params.channel_id,
+        &params.qrcode,
+        &params.access_token,
+        params.gateway_url.as_deref(),
+    )
+    .await?;
     Ok(Json(result))
 }

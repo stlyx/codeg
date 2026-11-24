@@ -29,12 +29,14 @@ interface AddChatChannelDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   onChannelAdded: () => void
+  onOpenWelinkAuth?: (channelId: number) => void
 }
 
 export function AddChatChannelDialog({
   open,
   onOpenChange,
   onChannelAdded,
+  onOpenWelinkAuth,
 }: AddChatChannelDialogProps) {
   const t = useTranslations("ChatChannelSettings")
   const [loading, setLoading] = useState(false)
@@ -46,6 +48,10 @@ export function AddChatChannelDialog({
   const [chatId, setChatId] = useState("")
   const [appId, setAppId] = useState("")
   const [baseUrl, setBaseUrl] = useState("https://ilinkai.weixin.qq.com")
+  const [welinkGatewayUrl, setWelinkGatewayUrl] = useState("")
+  const [welinkAssistantName, setWelinkAssistantName] = useState("codeagent")
+  const [welinkAk, setWelinkAk] = useState("")
+  const [welinkSk, setWelinkSk] = useState("")
   const [topicMode, setTopicMode] = useState(false)
   const [dailyReportEnabled, setDailyReportEnabled] = useState(false)
   const [dailyReportTime, setDailyReportTime] = useState("18:00")
@@ -58,6 +64,10 @@ export function AddChatChannelDialog({
     setChatId("")
     setAppId("")
     setBaseUrl("https://ilinkai.weixin.qq.com")
+    setWelinkGatewayUrl("")
+    setWelinkAssistantName("codeagent")
+    setWelinkAk("")
+    setWelinkSk("")
     setTopicMode(false)
     setDailyReportEnabled(false)
     setDailyReportTime("18:00")
@@ -72,65 +82,95 @@ export function AddChatChannelDialog({
     [onOpenChange, resetForm]
   )
 
-  const handleSubmit = useCallback(async () => {
-    if (!name.trim()) {
-      setError(t("nameRequired"))
-      return
-    }
-    if (channelType !== "weixin" && !token.trim()) {
-      setError(t("tokenRequired"))
-      return
-    }
-    if (channelType !== "weixin" && !chatId.trim()) {
-      setError(t("chatIdRequired"))
-      return
-    }
-
-    setLoading(true)
-    setError(null)
-    try {
-      const configJson =
-        channelType === "weixin"
-          ? JSON.stringify({ base_url: baseUrl })
-          : channelType === "lark"
-            ? JSON.stringify({ app_id: appId, chat_id: chatId })
-            : JSON.stringify({ chat_id: chatId, topic_mode: topicMode })
-
-      const channel = await createChatChannel({
-        name: name.trim(),
-        channelType,
-        configJson,
-        enabled: true,
-        dailyReportEnabled,
-        dailyReportTime: dailyReportEnabled ? dailyReportTime : null,
-      })
-
-      if (channelType !== "weixin" && token.trim()) {
-        await saveChatChannelToken(channel.id, token.trim())
+  const submitChannel = useCallback(
+    async (launchWelinkAuth: boolean) => {
+      if (!name.trim()) {
+        setError(t("nameRequired"))
+        return
+      }
+      if (channelType === "welink") {
+        if (!welinkGatewayUrl.trim()) {
+          setError(t("welinkGatewayUrlRequired"))
+          return
+        }
+      } else if (channelType !== "weixin") {
+        if (!token.trim()) {
+          setError(t("tokenRequired"))
+          return
+        }
+        if (!chatId.trim()) {
+          setError(t("chatIdRequired"))
+          return
+        }
       }
 
-      handleOpenChange(false)
-      onChannelAdded()
-    } catch (err) {
-      const msg = toErrorMessage(err)
-      setError(msg)
-    } finally {
-      setLoading(false)
-    }
-  }, [
-    name,
-    token,
-    chatId,
-    channelType,
-    appId,
-    baseUrl,
-    topicMode,
-    dailyReportEnabled,
-    dailyReportTime,
-    handleOpenChange,
-    onChannelAdded,
-    t,
-  ])
+      setLoading(true)
+      setError(null)
+      try {
+        const configJson =
+          channelType === "weixin"
+            ? JSON.stringify({ base_url: baseUrl })
+            : channelType === "lark"
+              ? JSON.stringify({ app_id: appId, chat_id: chatId })
+              : channelType === "welink"
+                ? JSON.stringify({
+                    assistant_name: welinkAssistantName.trim() || "codeagent",
+                    gateway_url: welinkGatewayUrl.trim(),
+                    ak: welinkAk.trim(),
+                  })
+                : JSON.stringify({ chat_id: chatId, topic_mode: topicMode })
+
+        const channel = await createChatChannel({
+          name: name.trim(),
+          channelType,
+          configJson,
+          enabled: true,
+          dailyReportEnabled,
+          dailyReportTime: dailyReportEnabled ? dailyReportTime : null,
+        })
+
+        if (channelType === "welink") {
+          if (welinkSk.trim()) {
+            await saveChatChannelToken(channel.id, welinkSk.trim())
+          }
+        } else if (channelType !== "weixin" && token.trim()) {
+          await saveChatChannelToken(channel.id, token.trim())
+        }
+
+        handleOpenChange(false)
+        onChannelAdded()
+        if (launchWelinkAuth && channelType === "welink") {
+          onOpenWelinkAuth?.(channel.id)
+        }
+      } catch (err) {
+        const msg = toErrorMessage(err)
+        setError(msg)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [
+      name,
+      token,
+      chatId,
+      channelType,
+      appId,
+      baseUrl,
+      welinkGatewayUrl,
+      welinkAssistantName,
+      welinkAk,
+      welinkSk,
+      topicMode,
+      dailyReportEnabled,
+      dailyReportTime,
+      handleOpenChange,
+      onChannelAdded,
+      onOpenWelinkAuth,
+      t,
+    ]
+  )
+
+  const handleSubmit = useCallback(() => submitChannel(false), [submitChannel])
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -162,6 +202,7 @@ export function AddChatChannelDialog({
                 <SelectItem value="telegram">Telegram</SelectItem>
                 <SelectItem value="lark">{t("lark")}</SelectItem>
                 <SelectItem value="weixin">{t("weixin")}</SelectItem>
+                <SelectItem value="welink">{t("welink")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -177,7 +218,7 @@ export function AddChatChannelDialog({
             </div>
           )}
 
-          {channelType !== "weixin" && (
+          {channelType !== "weixin" && channelType !== "welink" && (
             <div className="space-y-1.5">
               <label className="text-xs font-medium">
                 {channelType === "telegram" ? "Bot Token" : "App Secret"}
@@ -193,7 +234,7 @@ export function AddChatChannelDialog({
             </div>
           )}
 
-          {channelType !== "weixin" && (
+          {channelType !== "weixin" && channelType !== "welink" && (
             <div className="space-y-1.5">
               <label className="text-xs font-medium">Chat ID</label>
               <Input
@@ -204,6 +245,61 @@ export function AddChatChannelDialog({
                 }
               />
             </div>
+          )}
+
+          {channelType === "welink" && (
+            <>
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkGatewayUrlLabel")}
+                </label>
+                <Input
+                  value={welinkGatewayUrl}
+                  onChange={(e) => setWelinkGatewayUrl(e.target.value)}
+                  placeholder={t("welinkGatewayUrlPlaceholder")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("welinkGatewayUrlHint")}
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkAssistantNameLabel")}
+                </label>
+                <Input
+                  value={welinkAssistantName}
+                  onChange={(e) => setWelinkAssistantName(e.target.value)}
+                  placeholder="codeagent"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkAkLabel")}
+                </label>
+                <Input
+                  value={welinkAk}
+                  onChange={(e) => setWelinkAk(e.target.value)}
+                  placeholder={t("welinkAkPlaceholder")}
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-medium">
+                  {t("welinkSkLabel")}
+                </label>
+                <Input
+                  type="password"
+                  value={welinkSk}
+                  onChange={(e) => setWelinkSk(e.target.value)}
+                  placeholder={t("welinkSkPlaceholder")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t("welinkCredentialsOptionalHint")}
+                </p>
+              </div>
+            </>
           )}
 
           {channelType === "telegram" && (
@@ -268,6 +364,21 @@ export function AddChatChannelDialog({
           >
             {t("cancel")}
           </Button>
+          {channelType === "welink" &&
+            onOpenWelinkAuth &&
+            !welinkAk.trim() &&
+            !welinkSk.trim() && (
+              <Button
+                variant="secondary"
+                onClick={() => submitChannel(true)}
+                disabled={loading}
+              >
+                {loading && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
+                )}
+                {t("welinkScanToGetCredentials")}
+              </Button>
+            )}
           <Button onClick={handleSubmit} disabled={loading}>
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />}
             {t("create")}
