@@ -1,10 +1,11 @@
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sea_orm::DatabaseConnection;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio::time::{Instant, MissedTickBehavior};
 
 use super::i18n::Lang;
 use super::session_bridge::{PendingPermission, SessionBridge};
@@ -25,9 +26,8 @@ use crate::web::event_bridge::EventEmitter;
 
 use super::manager::ChatChannelManager;
 
-const FLUSH_INTERVAL_SECS: u64 = 10;
-const BUFFER_FLUSH_THRESHOLD: usize = 500;
-const MAX_MESSAGE_LEN: usize = 2000;
+const PROGRESS_INTERVAL: Duration = Duration::from_secs(180);
+const MAX_RESPONSE_CHARS: usize = 2000;
 const MESSAGE_LANGUAGE_KEY: &str = "chat_message_language";
 const COMMAND_PREFIX_KEY: &str = "chat_command_prefix";
 const DEFAULT_COMMAND_PREFIX: &str = "/";
@@ -52,7 +52,8 @@ pub fn spawn_session_event_subscriber(
     let metrics = Arc::clone(bus.metrics());
 
     tokio::spawn(async move {
-        let mut last_heartbeat = Instant::now();
+        let mut progress_tick = tokio::time::interval(Duration::from_secs(1));
+        progress_tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
         let mut lag_throttle = LagLogThrottle::new(LAG_LOG_WINDOW);
 
         loop {
@@ -86,11 +87,8 @@ pub fn spawn_session_event_subscriber(
                     )
                     .await;
                 }
-                _ = tokio::time::sleep(Duration::from_secs(FLUSH_INTERVAL_SECS)) => {
-                    if last_heartbeat.elapsed() >= Duration::from_secs(FLUSH_INTERVAL_SECS) {
-                        flush_progress(&bridge, &manager, &db_conn).await;
-                        last_heartbeat = Instant::now();
-                    }
+                _ = progress_tick.tick() => {
+                    send_progress(&bridge, &manager, &db_conn, Instant::now()).await;
                 }
             }
         }
@@ -294,7 +292,7 @@ async fn handle_acp_envelope(
                             let msg = RichMessage::info(
                                 super::i18n::task_deferred_busy(lang).to_string(),
                             );
-                            let _ = manager.send_to_target(&target, &msg).await;
+                            let _ = manager.send_turn_update(&target, &msg).await;
                         } else {
                             tracing::error!("[SessionEventSub] failed to send pending prompt: {e}");
                             let target = session.target.clone();
@@ -316,38 +314,15 @@ async fn handle_acp_envelope(
             if parent_tool_use_id.is_some() {
                 return;
             }
-            // Collect flush info under the lock, then release before any IO.
-            let flush_info: Option<(ChannelMessageTarget, String, Option<String>)> = {
-                let mut guard = bridge.lock().await;
-                match guard.get_mut(connection_id) {
-                    Some(session) => {
-                        session.content_buffer.push_str(text);
-                        if session.content_buffer.len() >= BUFFER_FLUSH_THRESHOLD
-                            && session.last_flushed.elapsed() >= Duration::from_secs(2)
-                        {
-                            session.last_flushed = Instant::now();
-                            Some((
-                                session.target.clone(),
-                                session.agent_type.to_string(),
-                                session.tool_calls.last().cloned(),
-                            ))
-                        } else {
-                            None
-                        }
-                    }
-                    None => None,
-                }
+            let mut guard = bridge.lock().await;
+            let Some(session) = guard.get_mut(connection_id) else {
+                return;
             };
-
-            if let Some((target, agent_label, last_tool)) = flush_info {
-                let lang = get_lang(db).await;
-                let mut status = super::i18n::agent_responding(lang, &agent_label);
-                if let Some(tool) = last_tool {
-                    status.push_str(&format!(" | {tool}"));
-                }
-                let msg = RichMessage::info(status);
-                let _ = manager.send_to_target(&target, &msg).await;
-            }
+            session.content_buffer.push_str(text);
+            let chunks = take_response_chunks(&mut session.content_buffer, false);
+            let target = session.target.clone();
+            drop(guard);
+            send_response_chunks(manager, &target, chunks).await;
         }
 
         AcpEvent::ToolCall {
@@ -356,34 +331,22 @@ async fn handle_acp_envelope(
             raw_input,
             ..
         } => {
-            // Emit a "delegation started" placeholder to the channel so
-            // remote users see something happen as soon as the parent agent
-            // fires `delegate_to_agent`, not only when the child wraps up.
-            let delegation_announce = if is_delegation_title(title) {
-                raw_input
-                    .as_deref()
-                    .and_then(extract_agent_type)
-                    .map(|agent| format!("🤖 Delegating to {agent}…"))
-            } else {
-                None
-            };
-
             let mut guard = bridge.lock().await;
-            if let Some(session) = guard.get_mut(connection_id) {
-                // Store title for progress indicator; store raw_input for later
-                session.tool_calls.push(title.clone());
-                if let Some(input) = raw_input.as_deref() {
+            let Some(session) = guard.get_mut(connection_id) else {
+                return;
+            };
+            if let Some(input) = raw_input.as_deref() {
+                if is_delegation_title(title) || names_delegation_target(input) {
                     session
                         .tool_call_inputs
                         .insert(tool_call_id.clone(), input.to_string());
                 }
-                if let Some(text) = delegation_announce {
-                    let target = session.target.clone();
-                    drop(guard);
-                    let msg = RichMessage::info(text);
-                    let _ = manager.send_to_target(&target, &msg).await;
-                }
             }
+            // The tool starts a new block, so deliver any preceding prose.
+            let chunks = take_response_chunks(&mut session.content_buffer, true);
+            let target = session.target.clone();
+            drop(guard);
+            send_response_chunks(manager, &target, chunks).await;
         }
 
         AcpEvent::ToolCallUpdate {
@@ -395,96 +358,45 @@ async fn handle_acp_envelope(
             ..
         } => {
             let mut guard = bridge.lock().await;
-            if let Some(session) = guard.get_mut(connection_id) {
-                // Accumulate raw_input if newly available
-                if let Some(input) = raw_input.as_deref() {
-                    session
-                        .tool_call_inputs
-                        .insert(tool_call_id.clone(), input.to_string());
-                }
+            let Some(session) = guard.get_mut(connection_id) else {
+                return;
+            };
+            let is_delegation = title.as_deref().is_some_and(is_delegation_title)
+                || session.tool_call_inputs.contains_key(tool_call_id)
+                || raw_input.as_deref().is_some_and(names_delegation_target);
+            if !is_delegation || session.delegation_rendered.contains(tool_call_id) {
+                return;
+            }
 
-                if status.as_deref() == Some("completed") {
-                    let effective_title = title.as_deref().unwrap_or("tool");
-                    let is_delegation = is_delegation_title(effective_title)
-                        || session
-                            .tool_call_inputs
-                            .get(tool_call_id)
-                            .map(|s| names_delegation_target(s))
-                            .unwrap_or(false)
-                        || raw_input
-                            .as_deref()
-                            .map(names_delegation_target)
-                            .unwrap_or(false);
+            if let Some(input) = raw_input {
+                session
+                    .tool_call_inputs
+                    .insert(tool_call_id.clone(), input.clone());
+            }
+
+            // A fast-complete or setup failure may only have a tool result.
+            // Running acknowledgements stay quiet. The eventual result arrives
+            // on DelegationCompleted.
+            if status.as_deref() == Some("completed") {
+                if let Some(report) = parse_delegation_report(raw_output.as_deref())
+                    .filter(DelegationReportView::is_terminal)
+                {
+                    let stored_input = session.tool_call_inputs.remove(tool_call_id);
+                    let agent = delegation_target_label(
+                        stored_input.as_deref(),
+                        report.assistant_name.as_deref(),
+                    )
+                    .unwrap_or_else(|| "agent".to_string());
+                    session.delegation_rendered.insert(tool_call_id.clone());
                     let target = session.target.clone();
-                    if is_delegation {
-                        let already_rendered = session.delegation_rendered.contains(tool_call_id);
-                        let report = parse_delegation_report(raw_output.as_deref());
-                        if report.as_ref().is_some_and(|r| r.is_terminal()) {
-                            // Terminal tool output (a fast-complete result, or a
-                            // setup failure). Render it EXACTLY ONCE, gated on the
-                            // `delegation_rendered` marker (NOT the input map,
-                            // which `raw_input` updates re-populate). This is the
-                            // only surface for setup failures and synthetic-id
-                            // fast-completes (neither emits `DelegationCompleted`),
-                            // and it no-ops when the completion event already
-                            // rendered first.
-                            if !already_rendered {
-                                let agent = delegation_target_label(
-                                    session
-                                        .tool_call_inputs
-                                        .get(tool_call_id)
-                                        .map(String::as_str)
-                                        .or(raw_input.as_deref()),
-                                    report.as_ref().and_then(|r| r.assistant_name.as_deref()),
-                                )
-                                .unwrap_or_else(|| "agent".to_string());
-                                let body =
-                                    format_delegation_terminal(&agent, report.as_ref().unwrap());
-                                session.delegation_rendered.insert(tool_call_id.clone());
-                                session.tool_call_inputs.remove(tool_call_id);
-                                drop(guard);
-                                let msg = RichMessage::info(body);
-                                let _ = manager.send_to_target(&target, &msg).await;
-                            }
-                        } else if !already_rendered {
-                            // Running ack (or unparseable output): announce the
-                            // background task. KEEP the stored input — the eventual
-                            // `DelegationCompleted` render needs the agent_type.
-                            // Suppressed once the result has rendered, so a late
-                            // re-emitted ack can't appear after the result.
-                            let agent = delegation_target_label(
-                                session
-                                    .tool_call_inputs
-                                    .get(tool_call_id)
-                                    .map(String::as_str)
-                                    .or(raw_input.as_deref()),
-                                report.as_ref().and_then(|r| r.assistant_name.as_deref()),
-                            )
-                            .unwrap_or_else(|| "agent".to_string());
-                            drop(guard);
-                            let msg = RichMessage::info(format_delegation_ack(&agent));
-                            let _ = manager.send_to_target(&target, &msg).await;
-                        }
-                    } else {
-                        let stored_input = session.tool_call_inputs.remove(tool_call_id);
-                        let input_ref = stored_input.as_deref().or(raw_input.as_deref());
-                        let body =
-                            format!(">> {}", format_tool_call_detail(effective_title, input_ref));
-                        drop(guard);
-                        let msg = RichMessage::info(body);
-                        let _ = manager.send_to_target(&target, &msg).await;
-                    }
+                    drop(guard);
+                    let msg = RichMessage::info(format_delegation_terminal(&agent, &report));
+                    let _ = manager.send_turn_update(&target, &msg).await;
                 }
             }
         }
 
-        // The async delegation result for the normal (slow) case: the tool
-        // output was a running ack (handled above), and the child's final
-        // outcome surfaces here. Rendered EXACTLY ONCE via the same stored-input
-        // dedup token — if a terminal `ToolCallUpdate` already rendered (and
-        // removed it), skip. (A synthetic `parent_tool_use_id` never reaches a
-        // bridged session's stored input, so this arm no-ops for synthetic ids,
-        // which is correct — the terminal `ToolCallUpdate` is their surface.)
+        // The asynchronous result can arrive after the parent turn ends.
         AcpEvent::DelegationCompleted {
             parent_tool_use_id,
             result,
@@ -509,7 +421,7 @@ async fn handle_acp_envelope(
                     let target = session.target.clone();
                     drop(guard);
                     let msg = RichMessage::info(format_delegation_result(&agent, result));
-                    let _ = manager.send_to_target(&target, &msg).await;
+                    let _ = manager.send_turn_update(&target, &msg).await;
                 }
             }
         }
@@ -610,7 +522,7 @@ async fn handle_acp_envelope(
                     fields: Vec::new(),
                     level: MessageLevel::Warning,
                 };
-                let _ = manager.send_to_target(&target, &msg).await;
+                let _ = manager.send_turn_update(&target, &msg).await;
             }
         }
 
@@ -623,10 +535,8 @@ async fn handle_acp_envelope(
             if let Some(session) = guard.get_mut(connection_id) {
                 let target = session.target.clone();
                 let conv_id = session.conversation_id;
-                let content = std::mem::take(&mut session.content_buffer);
-                let tool_count = session.tool_calls.len();
-                session.tool_calls.clear();
-                session.last_flushed = Instant::now();
+                let chunks = take_response_chunks(&mut session.content_buffer, true);
+                session.next_progress_at = None;
                 // A kickoff prompt deferred by `SessionStarted` (the connection
                 // was already mid-turn for another client) waits here. Take it
                 // BEFORE dropping the guard so a second TurnComplete can't
@@ -634,10 +544,10 @@ async fn handle_acp_envelope(
                 let deferred_kickoff = session.pending_prompt.take();
                 drop(guard);
 
+                send_response_chunks(manager, &target, chunks).await;
                 let lang = get_lang(db).await;
-                let body = format_completion(&content, tool_count, lang);
 
-                let msg = RichMessage::info(body)
+                let msg = RichMessage::info("")
                     .with_title(match lang {
                         Lang::ZhCn | Lang::ZhTw => "任务完成",
                         _ => "Turn Complete",
@@ -718,25 +628,29 @@ async fn handle_acp_envelope(
             };
 
             if !*terminal {
-                let target = {
+                let session_target = {
                     let guard = bridge.lock().await;
-                    guard.get(connection_id).map(|s| s.target.clone())
+                    guard
+                        .get(connection_id)
+                        .map(|s| (s.target.clone(), s.next_progress_at.is_some()))
                 };
-                if let Some(target) = target {
-                    let _ = manager.send_to_target(&target, &msg).await;
+                if let Some((target, prompting)) = session_target {
+                    if prompting {
+                        let _ = manager.send_turn_update(&target, &msg).await;
+                    } else {
+                        let _ = manager.send_to_target(&target, &msg).await;
+                    }
                 }
                 return;
             }
 
             let mut guard = bridge.lock().await;
-            if let Some(session) = guard.remove(connection_id) {
+            if let Some(mut session) = guard.remove(connection_id) {
                 let channel_id = session.channel_id;
                 let sender_id = session.sender_id.clone();
                 let target = session.target.clone();
                 let conv_id = session.conversation_id;
                 drop(guard);
-
-                let _ = manager.send_to_target(&target, &msg).await;
 
                 let _ = conversation_service::update_status(
                     db,
@@ -745,59 +659,79 @@ async fn handle_acp_envelope(
                 )
                 .await;
                 clear_session_route(db, channel_id, &sender_id, &target).await;
+                let chunks = take_response_chunks(&mut session.content_buffer, true);
+                send_response_chunks(manager, &target, chunks).await;
+                let _ = manager.send_to_target(&target, &msg).await;
             }
         }
 
-        AcpEvent::StatusChanged { status } => {
-            if matches!(
-                status,
-                ConnectionStatus::Disconnected | ConnectionStatus::Error
-            ) {
-                let mut guard = bridge.lock().await;
-                if let Some(session) = guard.remove(connection_id) {
-                    let channel_id = session.channel_id;
-                    let sender_id = session.sender_id.clone();
-                    let target = session.target.clone();
-                    drop(guard);
-
-                    clear_session_route(db, channel_id, &sender_id, &target).await;
+        AcpEvent::StatusChanged { status } => match status {
+            ConnectionStatus::Prompting => {
+                if let Some(session) = bridge.lock().await.get_mut(connection_id) {
+                    session
+                        .next_progress_at
+                        .get_or_insert_with(|| Instant::now() + PROGRESS_INTERVAL);
                 }
             }
-        }
+            ConnectionStatus::Connected => {
+                let mut guard = bridge.lock().await;
+                if let Some(session) = guard.get_mut(connection_id) {
+                    session.next_progress_at = None;
+                    let chunks = take_response_chunks(&mut session.content_buffer, true);
+                    let target = session.target.clone();
+                    drop(guard);
+                    send_response_chunks(manager, &target, chunks).await;
+                }
+            }
+            ConnectionStatus::Disconnected | ConnectionStatus::Error => {
+                let mut guard = bridge.lock().await;
+                if let Some(mut session) = guard.remove(connection_id) {
+                    drop(guard);
+                    clear_session_route(
+                        db,
+                        session.channel_id,
+                        &session.sender_id,
+                        &session.target,
+                    )
+                    .await;
+                    let chunks = take_response_chunks(&mut session.content_buffer, true);
+                    send_response_chunks(manager, &session.target, chunks).await;
+                }
+            }
+            ConnectionStatus::Connecting => {}
+        },
 
         _ => {}
     }
 }
 
-async fn flush_progress(
+async fn send_progress(
     bridge: &Arc<Mutex<SessionBridge>>,
     manager: &ChatChannelManager,
     db: &DatabaseConnection,
+    now: Instant,
 ) {
-    let lang = get_lang(db).await;
     let updates: Vec<(ChannelMessageTarget, String)> = {
         let mut guard = bridge.lock().await;
         let mut out = Vec::new();
         for session in guard.all_sessions_mut() {
-            if !session.content_buffer.is_empty()
-                && session.last_flushed.elapsed() >= Duration::from_secs(FLUSH_INTERVAL_SECS)
+            if session
+                .next_progress_at
+                .is_some_and(|deadline| now >= deadline)
             {
-                session.last_flushed = Instant::now();
-                let last_tool = session.tool_calls.last().cloned();
-                let agent_label = session.agent_type.to_string();
-                let mut status = super::i18n::agent_responding(lang, &agent_label);
-                if let Some(tool) = last_tool {
-                    status.push_str(&format!(" | {tool}"));
-                }
-                out.push((session.target.clone(), status));
+                session.next_progress_at = Some(now + PROGRESS_INTERVAL);
+                out.push((session.target.clone(), session.agent_type.to_string()));
             }
         }
         out
     };
 
-    for (target, text) in updates {
-        let msg = RichMessage::info(text);
-        let _ = manager.send_to_target(&target, &msg).await;
+    if !updates.is_empty() {
+        let lang = get_lang(db).await;
+        for (target, agent) in updates {
+            let msg = RichMessage::info(super::i18n::agent_responding(lang, &agent));
+            let _ = manager.send_turn_update(&target, &msg).await;
+        }
     }
 }
 
@@ -816,56 +750,58 @@ async fn clear_session_route(
     }
 }
 
-fn format_completion(content: &str, tool_count: usize, lang: Lang) -> String {
-    if content.is_empty() {
-        return match lang {
-            Lang::ZhCn | Lang::ZhTw => format!("(无文本输出, {tool_count} 次工具调用)"),
-            _ => format!("(No text output, {tool_count} tool calls)"),
+/// Drain complete paragraphs, splitting at a line break when a paragraph
+/// exceeds the message limit. A single long line is split at a character
+/// boundary. Keep an unfinished tail until the next delta or the end of the turn.
+fn take_response_chunks(buffer: &mut String, finish: bool) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut remaining = buffer.as_str();
+
+    while !remaining.is_empty() {
+        let limit = remaining
+            .char_indices()
+            .nth(MAX_RESPONSE_CHARS)
+            .map(|(index, _)| index);
+        let prefix = &remaining[..limit.unwrap_or(remaining.len())];
+        let mut line_end = 0;
+        let paragraph_end = prefix.split_inclusive('\n').find_map(|line| {
+            line_end += line.len();
+            (line.ends_with('\n') && line.trim().is_empty()).then_some(line_end)
+        });
+
+        let end = if let Some(end) = paragraph_end {
+            end
+        } else if limit.is_some() {
+            prefix.rfind('\n').map_or(prefix.len(), |index| index + 1)
+        } else if finish {
+            prefix.len()
+        } else {
+            break;
         };
+
+        let (chunk, rest) = remaining.split_at(end);
+        if !chunk.trim().is_empty() {
+            chunks.push(chunk.trim_end_matches(['\r', '\n']).to_owned());
+        }
+        remaining = rest;
     }
 
-    if content.len() <= MAX_MESSAGE_LEN {
-        let mut body = content.to_string();
-        if tool_count > 0 {
-            body.push_str(&format!(
-                "\n\n[{} {}]",
-                tool_count,
-                match lang {
-                    Lang::ZhCn | Lang::ZhTw => "次工具调用",
-                    _ => "tool calls",
-                }
-            ));
-        }
-        return body;
-    }
+    let consumed = buffer.len() - remaining.len();
+    buffer.drain(..consumed);
+    chunks
+}
 
-    // Truncate long content (use char boundaries to avoid panic on multi-byte)
-    let head_end = content
-        .char_indices()
-        .nth(500)
-        .map(|(i, _)| i)
-        .unwrap_or(content.len());
-    let head = &content[..head_end];
-    let tail_start = content
-        .char_indices()
-        .rev()
-        .nth(499)
-        .map(|(i, _)| i)
-        .unwrap_or(0);
-    let tail = &content[tail_start..];
-
-    match lang {
-        Lang::ZhCn | Lang::ZhTw => {
-            format!(
-                "{head}\n\n...\n\n{tail}\n\n[完整回复: {} 字符, {tool_count} 次工具调用]",
-                content.len()
-            )
-        }
-        _ => {
-            format!(
-                "{head}\n\n...\n\n{tail}\n\n[Full response: {} chars, {tool_count} tool calls]",
-                content.len()
-            )
+async fn send_response_chunks(
+    manager: &ChatChannelManager,
+    target: &ChannelMessageTarget,
+    chunks: Vec<String>,
+) {
+    for chunk in chunks {
+        if let Err(error) = manager
+            .send_turn_update(target, &RichMessage::info(chunk))
+            .await
+        {
+            tracing::warn!(channel_id = target.channel_id, %error, "[SessionEventSub] failed to send response text");
         }
     }
 }
@@ -1018,16 +954,6 @@ fn delegation_target_label(raw_input: Option<&str>, assistant_name: Option<&str>
     extract_agent_type(raw_input)
 }
 
-/// Ack line for a `delegate_to_agent` call: under async delegation the tool
-/// output is just a task id, so the channel shows that the sub-agent started
-/// and is running in the background. The result lands later via
-/// [`format_delegation_result`] on `DelegationCompleted`.
-fn format_delegation_ack(agent: &str) -> String {
-    format!("🚀 Delegated to {agent}; running in background")
-}
-
-/// A `delegate_to_agent` tool output parsed into the fields the chat relay
-/// needs to classify it (running ack vs terminal) and render the terminal line.
 struct DelegationReportView {
     status: Option<String>,
     error_code: Option<String>,
@@ -1208,14 +1134,6 @@ mod delegation_relay_tests {
     }
 
     #[test]
-    fn format_delegation_ack_announces_background() {
-        assert_eq!(
-            format_delegation_ack("codex"),
-            "🚀 Delegated to codex; running in background"
-        );
-    }
-
-    #[test]
     fn parse_delegation_report_classifies_running_vs_terminal() {
         // Running ack (envelope) → not terminal.
         let running = parse_delegation_report(Some(
@@ -1348,7 +1266,6 @@ mod async_relay_dedup_tests {
     use async_trait::async_trait;
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
-    use std::time::Instant;
     use tokio::sync::{mpsc, Mutex};
 
     /// Channel backend that records every message body sent to it, so tests can
@@ -1414,10 +1331,9 @@ mod async_relay_dedup_tests {
                 connection_id: "conn".into(),
                 agent_type: AgentType::ClaudeCode,
                 content_buffer: String::new(),
-                tool_calls: Vec::new(),
                 tool_call_inputs: inputs,
                 delegation_rendered: HashSet::new(),
-                last_flushed: Instant::now(),
+                next_progress_at: None,
                 pending_prompt: None,
                 permission_pending: None,
             },
@@ -1480,6 +1396,196 @@ mod async_relay_dedup_tests {
         rec.msgs.lock().await.clone()
     }
 
+    #[tokio::test]
+    async fn streams_completed_paragraphs_and_flushes_the_tail_once() {
+        let (bridge, chat, rec) = harness().await;
+        let conn = ConnectionManager::new();
+        let db = test_helpers::fresh_in_memory_db().await;
+        for (index, (text, parent_tool_use_id)) in [
+            ("第一段\n", None),
+            ("ignored\n\n", Some("sub-agent".to_string())),
+            ("\n第二段", None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let envelope = EventEnvelope {
+                seq: index as u64,
+                connection_id: "conn".into(),
+                payload: AcpEvent::ContentDelta {
+                    text: text.into(),
+                    parent_tool_use_id,
+                },
+            };
+            handle_acp_envelope(
+                &envelope,
+                &bridge,
+                &chat,
+                &conn,
+                &db.conn,
+                &EventEmitter::Noop,
+            )
+            .await;
+            if index < 2 {
+                assert!(sent(&rec).await.is_empty());
+            }
+        }
+        assert_eq!(sent(&rec).await, ["第一段"]);
+
+        let tool_start = EventEnvelope {
+            seq: 3,
+            connection_id: "conn".into(),
+            payload: AcpEvent::ToolCall {
+                tool_call_id: "read-1".into(),
+                title: "Read".into(),
+                kind: "read".into(),
+                status: "in_progress".into(),
+                content: None,
+                raw_input: None,
+                raw_output: None,
+                locations: None,
+                meta: None,
+                images: None,
+            },
+        };
+        handle_acp_envelope(
+            &tool_start,
+            &bridge,
+            &chat,
+            &conn,
+            &db.conn,
+            &EventEmitter::Noop,
+        )
+        .await;
+        assert_eq!(sent(&rec).await, ["第一段", "第二段"]);
+
+        let mut tool = completed_update("stdout", false);
+        tool.seq = 4;
+        let AcpEvent::ToolCallUpdate {
+            tool_call_id,
+            title,
+            ..
+        } = &mut tool.payload
+        else {
+            unreachable!();
+        };
+        *tool_call_id = "read-1".into();
+        *title = Some("Read".into());
+        handle_acp_envelope(&tool, &bridge, &chat, &conn, &db.conn, &EventEmitter::Noop).await;
+        assert_eq!(sent(&rec).await, ["第一段", "第二段"]);
+
+        let tail = EventEnvelope {
+            seq: 5,
+            connection_id: "conn".into(),
+            payload: AcpEvent::ContentDelta {
+                text: "第三段".into(),
+                parent_tool_use_id: None,
+            },
+        };
+        handle_acp_envelope(&tail, &bridge, &chat, &conn, &db.conn, &EventEmitter::Noop).await;
+        let complete = EventEnvelope {
+            seq: 6,
+            connection_id: "conn".into(),
+            payload: AcpEvent::TurnComplete {
+                session_id: "session".into(),
+                stop_reason: "end_turn".into(),
+                agent_type: "claude".into(),
+            },
+        };
+        handle_acp_envelope(
+            &complete,
+            &bridge,
+            &chat,
+            &conn,
+            &db.conn,
+            &EventEmitter::Noop,
+        )
+        .await;
+        assert_eq!(sent(&rec).await, ["第一段", "第二段", "第三段", ""]);
+        assert!(bridge
+            .lock()
+            .await
+            .get("conn")
+            .unwrap()
+            .content_buffer
+            .is_empty());
+    }
+
+    #[test]
+    fn splits_long_responses_at_newlines_and_long_lines_at_character_boundaries() {
+        let line = "字".repeat(1900);
+        let long_line = "界".repeat(2001);
+        let mut buffer = format!("{line}\r\n{long_line}");
+        let chunks = take_response_chunks(&mut buffer, false);
+        assert_eq!(chunks, [line, "界".repeat(2000)]);
+        assert_eq!(buffer, "界");
+        assert_eq!(take_response_chunks(&mut buffer, true), ["界"]);
+        assert!(buffer.is_empty());
+    }
+
+    #[tokio::test]
+    async fn progress_is_due_after_three_minutes_of_prompting_and_stops_when_connected() {
+        let (bridge, chat, rec) = harness().await;
+        let conn = ConnectionManager::new();
+        let db = test_helpers::fresh_in_memory_db().await;
+        let mut envelope = EventEnvelope {
+            seq: 1,
+            connection_id: "conn".into(),
+            payload: AcpEvent::StatusChanged {
+                status: ConnectionStatus::Prompting,
+            },
+        };
+        let start = Instant::now();
+        handle_acp_envelope(
+            &envelope,
+            &bridge,
+            &chat,
+            &conn,
+            &db.conn,
+            &EventEmitter::Noop,
+        )
+        .await;
+        let deadline = bridge
+            .lock()
+            .await
+            .get("conn")
+            .unwrap()
+            .next_progress_at
+            .unwrap();
+        assert!(deadline >= start + Duration::from_secs(180));
+
+        let just_before = Duration::from_millis(1);
+        send_progress(&bridge, &chat, &db.conn, deadline - just_before).await;
+        assert!(sent(&rec).await.is_empty());
+        send_progress(&bridge, &chat, &db.conn, deadline).await;
+        send_progress(
+            &bridge,
+            &chat,
+            &db.conn,
+            deadline + PROGRESS_INTERVAL - just_before,
+        )
+        .await;
+        assert_eq!(sent(&rec).await.len(), 1);
+        send_progress(&bridge, &chat, &db.conn, deadline + PROGRESS_INTERVAL).await;
+        assert_eq!(sent(&rec).await.len(), 2);
+
+        envelope.seq += 1;
+        envelope.payload = AcpEvent::StatusChanged {
+            status: ConnectionStatus::Connected,
+        };
+        handle_acp_envelope(
+            &envelope,
+            &bridge,
+            &chat,
+            &conn,
+            &db.conn,
+            &EventEmitter::Noop,
+        )
+        .await;
+        send_progress(&bridge, &chat, &db.conn, deadline + 2 * PROGRESS_INTERVAL).await;
+        assert_eq!(sent(&rec).await.len(), 2);
+    }
+
     const ACK: &str =
         r#"{"structuredContent":{"task_id":"x","status":"running","child_conversation_id":5}}"#;
     const FAST_COMPLETE: &str = r#"{"content":[{"type":"text","text":"done"}],"isError":false,"structuredContent":{"task_id":"x","status":"completed","child_conversation_id":5,"text":"done"}}"#;
@@ -1534,10 +1640,8 @@ mod async_relay_dedup_tests {
         assert!(msgs[0].starts_with("✅ codex"), "got {:?}", msgs[0]);
     }
 
-    /// Slow async: running ack first, then DelegationCompleted. Exactly two
-    /// lines — the ack and the result.
     #[tokio::test]
-    async fn slow_async_emits_ack_then_result() {
+    async fn slow_delegation_reports_only_its_result() {
         let (bridge, chat, rec) = harness().await;
         let conn = ConnectionManager::new();
         let db = test_helpers::fresh_in_memory_db().await;
@@ -1550,15 +1654,20 @@ mod async_relay_dedup_tests {
             &EventEmitter::Noop,
         )
         .await;
-        handle_acp_envelope(&delegation_completed_ok(), &bridge, &chat, &conn, &db.conn, &EventEmitter::Noop).await;
-        let msgs = sent(&rec).await;
-        assert_eq!(msgs.len(), 2, "ack + result, got {msgs:?}");
-        assert!(msgs[0].contains("running in background"));
-        assert!(msgs[1].starts_with("✅ codex"));
+        assert!(sent(&rec).await.is_empty());
+        handle_acp_envelope(
+            &delegation_completed_ok(),
+            &bridge,
+            &chat,
+            &conn,
+            &db.conn,
+            &EventEmitter::Noop,
+        )
+        .await;
+        assert_eq!(sent(&rec).await, vec!["✅ codex: done"]);
     }
 
-    /// A late running-ack `ToolCallUpdate` (with raw_input) arriving AFTER the
-    /// result must NOT emit a stale "running in background" line.
+    /// A running acknowledgement arriving after its result stays quiet.
     #[tokio::test]
     async fn stale_ack_after_result_is_suppressed() {
         let (bridge, chat, rec) = harness().await;
@@ -1723,7 +1832,6 @@ mod error_terminal_gate_tests {
     use crate::db::test_helpers;
     use crate::models::agent::AgentType;
     use std::sync::Arc;
-    use std::time::Instant;
     use tokio::sync::Mutex;
 
     async fn read_row_status(db: &crate::db::AppDatabase, id: i32) -> ConversationStatus {
@@ -1754,10 +1862,9 @@ mod error_terminal_gate_tests {
                 connection_id: connection_id.to_string(),
                 agent_type: AgentType::ClaudeCode,
                 content_buffer: String::new(),
-                tool_calls: Vec::new(),
                 tool_call_inputs: std::collections::HashMap::new(),
                 delegation_rendered: std::collections::HashSet::new(),
-                last_flushed: Instant::now(),
+                next_progress_at: None,
                 pending_prompt: None,
                 permission_pending: None,
             },
@@ -2221,10 +2328,9 @@ mod auto_approve_tests {
                 connection_id: "conn-auto".to_string(),
                 agent_type: AgentType::ClaudeCode,
                 content_buffer: String::new(),
-                tool_calls: Vec::new(),
                 tool_call_inputs: std::collections::HashMap::new(),
                 delegation_rendered: std::collections::HashSet::new(),
-                last_flushed: Instant::now(),
+                next_progress_at: None,
                 pending_prompt: None,
                 permission_pending: None,
             },

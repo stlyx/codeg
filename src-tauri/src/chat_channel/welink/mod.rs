@@ -27,6 +27,37 @@ impl WelinkBackend {
             shutdown_tx: Mutex::new(None),
         }
     }
+
+    async fn send_target_message(
+        &self,
+        message: &RichMessage,
+        target: &ChannelMessageTarget,
+        finish_turn: bool,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let payload = target.provider_payload.as_ref();
+        let tool_session_id = payload
+            .and_then(|p| p.get("toolSessionId"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| target.chat_id.as_deref().filter(|s| !s.trim().is_empty()))
+            .ok_or_else(|| {
+                ChatChannelError::SendFailed("WeLink target missing toolSessionId".into())
+            })?;
+
+        let welink_session_id = payload
+            .and_then(|p| p.get("welinkSessionId"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
+
+        channel::send_turn_message(
+            &self.shared,
+            tool_session_id,
+            welink_session_id,
+            &message.to_plain_text(),
+            finish_turn,
+        )
+        .await
+    }
 }
 
 #[async_trait]
@@ -101,25 +132,15 @@ impl ChatChannelBackend for WelinkBackend {
         message: &RichMessage,
         target: &ChannelMessageTarget,
     ) -> Result<SentMessageId, ChatChannelError> {
-        let payload = target.provider_payload.as_ref();
-        let tool_session_id = payload
-            .and_then(|p| p.get("toolSessionId"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| target.chat_id.as_deref().filter(|s| !s.trim().is_empty()))
-            .ok_or_else(|| {
-                ChatChannelError::SendFailed(
-                    "WeLink target missing toolSessionId".into(),
-                )
-            })?;
+        self.send_target_message(message, target, true).await
+    }
 
-        let welink_session_id = payload
-            .and_then(|p| p.get("welinkSessionId"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty());
-
-        let text = message.to_plain_text();
-        channel::send_turn_reply(&self.shared, tool_session_id, welink_session_id, &text).await
+    async fn send_turn_update(
+        &self,
+        message: &RichMessage,
+        target: &ChannelMessageTarget,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        self.send_target_message(message, target, false).await
     }
 
     async fn test_connection(&self) -> Result<(), ChatChannelError> {

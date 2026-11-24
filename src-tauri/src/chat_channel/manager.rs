@@ -134,15 +134,10 @@ impl ChatChannelManager {
         channel_id: i32,
         message: &RichMessage,
     ) -> Result<SentMessageId, ChatChannelError> {
-        let backend = {
-            let channels = self.inner.channels.lock().await;
-            channels
-                .get(&channel_id)
-                .ok_or(ChatChannelError::NotFound(channel_id))?
-                .backend
-                .clone()
-        };
-        backend.send_rich_message(message).await
+        self.backend(channel_id)
+            .await?
+            .send_rich_message(message)
+            .await
     }
 
     pub async fn send_to_target(
@@ -150,15 +145,32 @@ impl ChatChannelManager {
         target: &ChannelMessageTarget,
         message: &RichMessage,
     ) -> Result<SentMessageId, ChatChannelError> {
-        let backend = {
-            let channels = self.inner.channels.lock().await;
-            channels
-                .get(&target.channel_id)
-                .ok_or(ChatChannelError::NotFound(target.channel_id))?
-                .backend
-                .clone()
-        };
-        backend.send_rich_message_to(message, target).await
+        self.backend(target.channel_id)
+            .await?
+            .send_rich_message_to(message, target)
+            .await
+    }
+
+    pub async fn send_turn_update(
+        &self,
+        target: &ChannelMessageTarget,
+        message: &RichMessage,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        self.backend(target.channel_id)
+            .await?
+            .send_turn_update(message, target)
+            .await
+    }
+
+    async fn backend(
+        &self,
+        channel_id: i32,
+    ) -> Result<Arc<dyn ChatChannelBackend>, ChatChannelError> {
+        let channels = self.inner.channels.lock().await;
+        channels
+            .get(&channel_id)
+            .map(|channel| channel.backend.clone())
+            .ok_or(ChatChannelError::NotFound(channel_id))
     }
 
     pub async fn send_interactive_to_target(

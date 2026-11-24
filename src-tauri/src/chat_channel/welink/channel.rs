@@ -665,11 +665,12 @@ async fn handle_invoke(
                 let shared_clone = Arc::clone(shared);
                 let tsid = payload.tool_session_id;
                 tokio::spawn(async move {
-                    if let Err(e) = send_turn_reply(
+                    if let Err(e) = send_turn_message(
                         &shared_clone,
                         &tsid,
                         Some(&welink_session_id),
                         SUPPRESS_REPLY_TEXT,
+                        true,
                     )
                     .await
                     {
@@ -798,13 +799,13 @@ async fn handle_invoke(
     }
 }
 
-/// Push a complete non-streaming assistant reply using the cloud event sequence:
-/// `step.start` -> `text.done` -> `step.done` -> 100ms delay -> `tool_done`.
-pub async fn send_turn_reply(
+/// Send one text message. Only the final message closes the gateway turn.
+pub async fn send_turn_message(
     shared: &WelinkShared,
     tool_session_id: &str,
     welink_session_id: Option<&str>,
     text: &str,
+    finish_turn: bool,
 ) -> Result<SentMessageId, ChatChannelError> {
     let _guard = shared.turn_send_lock.lock().await;
 
@@ -846,15 +847,17 @@ pub async fn send_turn_reply(
         .await
         .map_err(send_err)?;
 
-    tokio::time::sleep(TOOL_DONE_COMPAT_DELAY).await;
+    if finish_turn {
+        tokio::time::sleep(TOOL_DONE_COMPAT_DELAY).await;
 
-    outbound_tx
-        .send(OutboundFrame::Json(UpstreamMessage::tool_done(
-            tool_session_id.to_string(),
-            welink_session_id.map(String::from),
-        )))
-        .await
-        .map_err(send_err)?;
+        outbound_tx
+            .send(OutboundFrame::Json(UpstreamMessage::tool_done(
+                tool_session_id.to_string(),
+                welink_session_id.map(String::from),
+            )))
+            .await
+            .map_err(send_err)?;
+    }
 
     Ok(SentMessageId(message_id))
 }
@@ -979,7 +982,7 @@ mod tests {
             let tool_sid = created["toolSessionId"].as_str().unwrap().to_string();
             assert_eq!(tool_sid.len(), 12);
 
-            // 7. chat -> expect 4-frame non-streaming reply sequence from backend
+            // 7. The paragraph arrives before the last message ends the turn.
             let chat_frame = serde_json::json!({
                 "type": "invoke",
                 "traceId": "tr_1",
@@ -994,6 +997,14 @@ mod tests {
             ws.send(tungstenite::Message::Text(chat_frame.to_string().into()))
                 .await
                 .unwrap();
+
+            let start = read_json(&mut ws).await;
+            let paragraph = read_json(&mut ws).await;
+            let done = read_json(&mut ws).await;
+            assert_eq!(start["event"]["type"], "step.start");
+            assert_eq!(paragraph["event"]["type"], "text.done");
+            assert_eq!(paragraph["event"]["properties"]["content"], "first paragraph");
+            assert_eq!(done["event"]["type"], "step.done");
 
             let f1 = read_json(&mut ws).await;
             let f2 = read_json(&mut ws).await;
@@ -1065,6 +1076,10 @@ mod tests {
         assert_eq!(incoming.sender_id, "emp_01");
         assert_eq!(incoming.command_text, "hello agent");
 
+        backend
+            .send_turn_update(&RichMessage::info("first paragraph"), &incoming.target)
+            .await
+            .unwrap();
         backend
             .send_rich_message_to(&RichMessage::info("reply body"), &incoming.target)
             .await

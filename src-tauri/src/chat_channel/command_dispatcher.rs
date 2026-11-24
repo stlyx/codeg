@@ -173,6 +173,7 @@ async fn send_dispatch_message(
 
     let send_result = match &message {
         DispatchMessage::Rich(message) => manager.send_to_target(&target, message).await,
+        DispatchMessage::TurnUpdate(message) => manager.send_turn_update(&target, message).await,
         DispatchMessage::Interactive(message) => {
             manager.send_interactive_to_target(&target, message).await
         }
@@ -233,7 +234,7 @@ async fn dispatch_command(
             }
 
             if target.is_telegram_forum_topic() {
-                return DispatchResponse::current(
+                return DispatchResponse::followup(
                     session_commands::handle_followup(session_commands::FollowupRequest {
                         db,
                         text,
@@ -258,7 +259,7 @@ async fn dispatch_command(
                 guard.find_by_sender(channel_id, sender_id).is_some()
             };
             if has_session {
-                return DispatchResponse::current(
+                return DispatchResponse::followup(
                     session_commands::handle_followup(session_commands::FollowupRequest {
                         db,
                         text,
@@ -347,8 +348,13 @@ async fn dispatch_command(
                 prefix, data_dir,
             )
             .await;
+            let message = if result.post_action.is_some() {
+                DispatchMessage::TurnUpdate(result.message)
+            } else {
+                DispatchMessage::Rich(result.message)
+            };
             DispatchResponse {
-                message: Some(DispatchMessage::Rich(result.message)),
+                message: Some(message),
                 target: result.response_target,
                 extra_messages: result
                     .extra_responses
@@ -412,6 +418,18 @@ struct DispatchResponse {
 }
 
 impl DispatchResponse {
+    fn followup(result: Result<RichMessage, RichMessage>, target: &ChannelMessageTarget) -> Self {
+        match result {
+            Ok(message) => Self {
+                message: Some(DispatchMessage::TurnUpdate(message)),
+                target: target.clone(),
+                extra_messages: Vec::new(),
+                post_action: None,
+            },
+            Err(message) => Self::current(message, target),
+        }
+    }
+
     fn current(message: RichMessage, target: &ChannelMessageTarget) -> Self {
         Self {
             message: Some(DispatchMessage::Rich(message)),
@@ -452,27 +470,28 @@ impl DispatchResponse {
 
 enum DispatchMessage {
     Rich(RichMessage),
+    TurnUpdate(RichMessage),
     Interactive(InteractiveMessage),
 }
 
 impl DispatchMessage {
     fn title(&self) -> Option<&String> {
         match self {
-            Self::Rich(message) => message.title.as_ref(),
+            Self::Rich(message) | Self::TurnUpdate(message) => message.title.as_ref(),
             Self::Interactive(message) => message.base.title.as_ref(),
         }
     }
 
     fn body_len(&self) -> usize {
         match self {
-            Self::Rich(message) => message.body.len(),
+            Self::Rich(message) | Self::TurnUpdate(message) => message.body.len(),
             Self::Interactive(message) => message.base.body.len(),
         }
     }
 
     fn to_plain_text(&self) -> String {
         match self {
-            Self::Rich(message) => message.to_plain_text(),
+            Self::Rich(message) | Self::TurnUpdate(message) => message.to_plain_text(),
             Self::Interactive(message) => message.to_rich_fallback().to_plain_text(),
         }
     }

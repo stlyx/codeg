@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::time::Instant;
+
+use tokio::time::Instant;
 
 use crate::acp::types::PermissionOptionInfo;
 use crate::chat_channel::types::{ChannelMessageTarget, SentMessageId};
@@ -20,8 +21,7 @@ pub struct ActiveSession {
     pub connection_id: String,
     pub agent_type: AgentType,
     pub content_buffer: String,
-    pub tool_calls: Vec<String>,
-    /// Stores raw_input by tool_call_id for detail extraction on completion.
+    /// Delegation arguments used to label the final result.
     pub tool_call_inputs: HashMap<String, String>,
     /// `tool_call_id`s of delegations whose terminal result line was already
     /// rendered to the channel. The dedup marker for async delegation: the
@@ -31,7 +31,7 @@ pub struct ActiveSession {
     /// `tool_call_inputs` because that map is re-populated by every `raw_input`
     /// update and so can't serve as a one-shot token. Cleared with the session.
     pub delegation_rendered: HashSet<String>,
-    pub last_flushed: Instant,
+    pub next_progress_at: Option<Instant>,
     pub pending_prompt: Option<String>,
     pub permission_pending: Option<PendingPermission>,
 }
@@ -161,10 +161,9 @@ mod tests {
             connection_id: String::new(),
             agent_type: AgentType::ClaudeCode,
             content_buffer: String::new(),
-            tool_calls: Vec::new(),
             tool_call_inputs: HashMap::new(),
             delegation_rendered: HashSet::new(),
-            last_flushed: Instant::now(),
+            next_progress_at: None,
             pending_prompt: None,
             permission_pending: None,
         }
