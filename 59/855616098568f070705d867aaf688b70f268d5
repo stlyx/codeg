@@ -1,0 +1,14 @@
+.github/workflows/test.yml
+  h_7a54ba4f35a957 131-135,139,141-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "59855616098568f070705d867aaf688b70f268d5",
+  "prompts": {},
+  "humans": {
+    "h_7a54ba4f35a957": {
+      "author": "xintaofei <xintaofei@users.noreply.github.com>"
+    }
+  }
+}

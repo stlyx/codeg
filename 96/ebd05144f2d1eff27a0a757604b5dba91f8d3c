@@ -1,0 +1,16 @@
+.github/workflows/test.yml
+  h_7a54ba4f35a957 129-139,149,156-157
+src-tauri/src/harness/updates/tests.rs
+  h_7a54ba4f35a957 960-962
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96ebd05144f2d1eff27a0a757604b5dba91f8d3c",
+  "prompts": {},
+  "humans": {
+    "h_7a54ba4f35a957": {
+      "author": "xintaofei <xintaofei@users.noreply.github.com>"
+    }
+  }
+}
