@@ -65,8 +65,6 @@ jobs:
             const bundles = [
               'codeg-server-linux-x64.tar.gz',
               'codeg-server-linux-arm64.tar.gz',
-              'codeg-server-darwin-x64.tar.gz',
-              'codeg-server-darwin-arm64.tar.gz',
               'codeg-server-windows-x64.zip',
             ];
             for (const name of bundles) {

@@ -77,14 +77,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        os: [ubuntu-22.04, macos-15-intel, windows-latest]
         mode: [desktop, server, cli]
         # macOS only runs the desktop cell; server and cli are covered by
         # the Linux and Windows cells.
         exclude:
-          - os: macos-latest
+          - os: macos-15-intel
             mode: server
-          - os: macos-latest
+          - os: macos-15-intel
             mode: cli
         include:
           - mode: desktop
