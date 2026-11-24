@@ -1,0 +1,16 @@
+src-tauri/src/acp/session_state.rs
+  h_7a54ba4f35a957 5271,5588
+src-tauri/src/agent_turn_files/mod.rs
+  h_7a54ba4f35a957 673
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "56a250c4e05cfa9d44260a7b94843691cf032c8a",
+  "prompts": {},
+  "humans": {
+    "h_7a54ba4f35a957": {
+      "author": "xintaofei <xintaofei@users.noreply.github.com>"
+    }
+  }
+}
