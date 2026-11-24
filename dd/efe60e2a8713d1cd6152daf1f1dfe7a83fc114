@@ -1,0 +1,50 @@
+src-tauri/src/chat_channel/session_bridge.rs
+  s_93ddd08ad30e95::t_48c6ac0526bf97 2,24
+  s_93ddd08ad30e95::t_7b256f6dfef98f 3,34
+  s_93ddd08ad30e95::t_33d3ea7b6a3e56 166
+src-tauri/src/chat_channel/command_dispatcher.rs
+  s_93ddd08ad30e95::t_09351f3a79f6ff 176,237,262,351-355,357,421-432,473,480,487,494
+src-tauri/src/chat_channel/event_subscriber.rs
+  s_93ddd08ad30e95::t_33d3ea7b6a3e56 871
+src-tauri/src/chat_channel/manager.rs
+  s_93ddd08ad30e95::t_50aa7c38504db8 148-164,169-173
+  s_93ddd08ad30e95::t_bc160a11b0b4f9 137-140,165-168
+src-tauri/src/chat_channel/session_event_subscriber.rs
+  s_93ddd08ad30e95::t_847b72605c56ce 3,8,29-30,55-56,90,295,317-319,321-325,338-339
+  s_93ddd08ad30e95::t_f68d8f3a680404 361-375,377-390,392-394,399,424,525,538-539,547,550,753-779,782-784,786,789-792,794-799,804,1667
+  s_93ddd08ad30e95::t_bc160a11b0b4f9 690-696,718-720,800-803,1658-1659
+  s_93ddd08ad30e95::t_33d3ea7b6a3e56 1336,1867,2333
+  s_93ddd08ad30e95::t_5daa57544c0ca6 91,712,1399-1419,1429-1434,1462,1464,1468-1474,1476,1486,1488-1494,1512-1538,1555-1560,1568-1572,1585-1588,1670
+  s_93ddd08ad30e95::t_c1d2b4eddfda1f 1435-1461,1463,1475,1477-1485,1487,1504
+  s_93ddd08ad30e95::t_c684f59b27fff0 1644,1657
+  s_93ddd08ad30e95::t_26fbfb6b4693b6 335-337,345-349
+  s_93ddd08ad30e95::t_d4206c04559d75 1420-1428,1465-1467,1495-1503,1505-1511,1539-1554,1561-1567,1573-1584,1660-1666
+  s_93ddd08ad30e95::t_028cebbe2b3573 631,633-635,637-642,648,662-664,668-676,678-680,683,686-689,697-702,708,722-723,729-734
+src-tauri/src/chat_channel/session_commands.rs
+  s_93ddd08ad30e95::t_33d3ea7b6a3e56 620,923,1330,1920,2124,2287
+  s_93ddd08ad30e95::t_f70d5a44d19213 1112,1133,1136,1139,1183,1186,1189,1192,1196,1200,1250,1282,1286,1289,1295,1298,1352,1376,1380,1383,2143-2144
+  s_93ddd08ad30e95::t_bc160a11b0b4f9 1158-1160,1171-1173,1205-1207,1263-1265,1271-1273,1313-1317
+src-tauri/src/chat_channel/traits.rs
+  s_93ddd08ad30e95::t_f74a7ddeed37c1 43-51
+src-tauri/src/chat_channel/welink/channel.rs
+  s_93ddd08ad30e95::t_afb7dfb9d41b6d 985,1001-1008,1079-1082
+  s_93ddd08ad30e95::t_0f0873f0d198a0 668,673,802-803,808,850-851,853-860
+src-tauri/src/chat_channel/welink/mod.rs
+  s_93ddd08ad30e95::t_a141abd74b25a5 30-60,135-136,138-143
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ddefe60e2a8713d1cd6152daf1f1dfe7a83fc114",
+  "prompts": {},
+  "sessions": {
+    "s_93ddd08ad30e95": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20d90-06ef-7ef3-a903-93361142a6c8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "xintaofei <xintaofei@users.noreply.github.com>"
+    }
+  }
+}
