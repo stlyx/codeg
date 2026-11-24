@@ -53,6 +53,7 @@ import { toErrorMessage } from "@/lib/app-error"
 import { AddChatChannelDialog } from "./add-chat-channel-dialog"
 import { EditChatChannelDialog } from "./edit-chat-channel-dialog"
 import { WeixinQrcodeDialog } from "./weixin-qrcode-dialog"
+import { WelinkAuthDialog } from "./welink-auth-dialog"
 
 export function ChannelListTab() {
   const t = useTranslations("ChatChannelSettings")
@@ -64,6 +65,9 @@ export function ChannelListTab() {
   const [deleteTarget, setDeleteTarget] = useState<ChatChannelInfo | null>(null)
   const [actionLoading, setActionLoading] = useState<number | null>(null)
   const [qrcodeChannelId, setQrcodeChannelId] = useState<number | null>(null)
+  const [welinkAuthChannelId, setWelinkAuthChannelId] = useState<number | null>(
+    null
+  )
 
   const loadChannels = useCallback(async () => {
     try {
@@ -139,6 +143,9 @@ export function ChannelListTab() {
         if (channelType === "weixin") {
           // No token or token expired — show QR code dialog
           setQrcodeChannelId(id)
+        } else if (channelType === "welink") {
+          // Missing AK/SK — open WeLink authorization dialog
+          setWelinkAuthChannelId(id)
         } else {
           const msg = toErrorMessage(err)
           toast.error(t("connectFailed") + ": " + msg)
@@ -153,6 +160,24 @@ export function ChannelListTab() {
   const handleWeixinAuthSuccess = useCallback(
     async (channelId: number) => {
       setQrcodeChannelId(null)
+      setActionLoading(channelId)
+      try {
+        await connectChatChannel(channelId)
+        toast.success(t("connectSuccess"))
+        await loadChannels()
+      } catch (err: unknown) {
+        const msg = toErrorMessage(err)
+        toast.error(t("connectFailed") + ": " + msg)
+      } finally {
+        setActionLoading(null)
+      }
+    },
+    [loadChannels, t]
+  )
+
+  const handleWelinkAuthSuccess = useCallback(
+    async (channelId: number) => {
+      setWelinkAuthChannelId(null)
       setActionLoading(channelId)
       try {
         await connectChatChannel(channelId)
@@ -376,6 +401,7 @@ export function ChannelListTab() {
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         onChannelAdded={loadChannels}
+        onOpenWelinkAuth={setWelinkAuthChannelId}
       />
 
       {editTarget && (
@@ -384,6 +410,7 @@ export function ChannelListTab() {
           channel={editTarget}
           onOpenChange={(open) => !open && setEditTarget(null)}
           onChannelUpdated={loadChannels}
+          onOpenWelinkAuth={setWelinkAuthChannelId}
         />
       )}
 
@@ -393,6 +420,15 @@ export function ChannelListTab() {
           channelId={qrcodeChannelId}
           onOpenChange={(open) => !open && setQrcodeChannelId(null)}
           onAuthSuccess={handleWeixinAuthSuccess}
+        />
+      )}
+
+      {welinkAuthChannelId !== null && (
+        <WelinkAuthDialog
+          open
+          channelId={welinkAuthChannelId}
+          onOpenChange={(open) => !open && setWelinkAuthChannelId(null)}
+          onAuthSuccess={handleWelinkAuthSuccess}
         />
       )}
 

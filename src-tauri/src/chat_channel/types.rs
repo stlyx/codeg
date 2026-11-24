@@ -6,6 +6,7 @@ pub enum ChannelType {
     Lark,
     Telegram,
     Weixin,
+    Welink,
 }
 
 // ── Per-channel strong typed configs ──
@@ -28,12 +29,33 @@ pub struct WeixinConfig {
     pub base_url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WelinkConfig {
+    /// `register.toolType`, also used as `channel` param during QR/PC link registration.
+    #[serde(default = "default_welink_assistant_name")]
+    pub assistant_name: String,
+    /// WeLink AI gateway domain (e.g. `api.inner.welink.example.com`) or full WS URL.
+    #[serde(default)]
+    pub gateway_url: String,
+    /// `register.deviceName`; defaults to local hostname when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    /// AK (non-sensitive; filled automatically after auth or entered manually).
+    #[serde(default)]
+    pub ak: String,
+}
+
+pub fn default_welink_assistant_name() -> String {
+    "codeagent".to_string()
+}
+
 impl std::fmt::Display for ChannelType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ChannelType::Lark => write!(f, "lark"),
             ChannelType::Telegram => write!(f, "telegram"),
             ChannelType::Weixin => write!(f, "weixin"),
+            ChannelType::Welink => write!(f, "welink"),
         }
     }
 }
