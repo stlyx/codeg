@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use tokio::sync::Mutex;
@@ -616,10 +615,9 @@ pub async fn handle_task(
             connection_id: connection_id.clone(),
             agent_type,
             content_buffer: String::new(),
-            tool_calls: Vec::new(),
             tool_call_inputs: std::collections::HashMap::new(),
             delegation_rendered: std::collections::HashSet::new(),
-            last_flushed: Instant::now(),
+            next_progress_at: None,
             pending_prompt: None,
             permission_pending: None,
         };
@@ -920,10 +918,9 @@ pub async fn handle_resume(
             connection_id: connection_id.clone(),
             agent_type: conv.agent_type,
             content_buffer: String::new(),
-            tool_calls: Vec::new(),
             tool_call_inputs: std::collections::HashMap::new(),
             delegation_rendered: std::collections::HashSet::new(),
-            last_flushed: Instant::now(),
+            next_progress_at: None,
             pending_prompt: None,
             permission_pending: None,
         };
@@ -1112,7 +1109,7 @@ pub async fn handle_permission_response(
 
 // ── follow-up (non-command text) ──
 
-pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
+pub async fn handle_followup(req: FollowupRequest<'_>) -> Result<RichMessage, RichMessage> {
     if req.target.is_telegram_forum_topic() {
         return handle_topic_followup(req).await;
     }
@@ -1133,13 +1130,13 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
             } else {
                 i18n::no_active_session_use_task(req.lang, req.prefix)
             };
-            return RichMessage::info(body);
+            return Err(RichMessage::info(body));
         }
         Err(e) => {
-            return RichMessage::error(format!(
+            return Err(RichMessage::error(format!(
                 "{}{e}",
                 i18n::failed_to_load_context_label(req.lang)
-            ));
+            )));
         }
     };
 
@@ -1158,7 +1155,9 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
                     sender_context_service::clear_session(req.db, req.channel_id, req.sender_id)
                         .await;
             }
-            return RichMessage::info(i18n::session_connection_lost(req.lang, req.prefix));
+            return Err(RichMessage::info(i18n::session_connection_lost(
+                req.lang, req.prefix,
+            )));
         }
     }
 
@@ -1169,7 +1168,9 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
         // connection is alive, so do NOT tear down the bridge/session. Tell the
         // user to retry once the current turn finishes.
         if matches!(e, crate::acp::error::AcpError::TurnInProgress) {
-            return RichMessage::info(i18n::agent_busy_retry(req.lang).to_string());
+            return Err(RichMessage::info(
+                i18n::agent_busy_retry(req.lang).to_string(),
+            ));
         }
         // Otherwise the connection may have died — clean up.
         req.bridge.lock().await.remove(&connection_id);
@@ -1179,29 +1180,31 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
             let _ =
                 sender_context_service::clear_session(req.db, req.channel_id, req.sender_id).await;
         }
-        return RichMessage::error(format!(
+        return Err(RichMessage::error(format!(
             "{}{e}",
             i18n::failed_to_send_message_label(req.lang)
-        ));
+        )));
     }
 
-    RichMessage::info(i18n::message_sent(req.lang))
+    Ok(RichMessage::info(i18n::message_sent(req.lang)))
 }
 
-async fn handle_topic_followup(req: FollowupRequest<'_>) -> RichMessage {
+async fn handle_topic_followup(req: FollowupRequest<'_>) -> Result<RichMessage, RichMessage> {
     let binding = match thread_binding_service::get_by_target(req.db, req.target).await {
         Ok(binding) => binding,
         Err(e) => {
-            return RichMessage::error(format!(
+            return Err(RichMessage::error(format!(
                 "{}{}",
                 i18n::failed_to_load_context_label(req.lang),
                 e
-            ));
+            )));
         }
     };
 
     let Some(binding) = binding else {
-        return RichMessage::info(no_topic_session_use_task_or_resume(req.lang, req.prefix));
+        return Err(RichMessage::info(no_topic_session_use_task_or_resume(
+            req.lang, req.prefix,
+        )));
     };
 
     let bridge_session = {
@@ -1244,7 +1247,7 @@ async fn handle_topic_followup(req: FollowupRequest<'_>) -> RichMessage {
 async fn send_followup_to_session(
     req: FollowupRequest<'_>,
     session_ref: CommandSessionRef,
-) -> RichMessage {
+) -> Result<RichMessage, RichMessage> {
     let connection_id = session_ref.connection_id;
     {
         let bridge_guard = req.bridge.lock().await;
@@ -1257,13 +1260,17 @@ async fn send_followup_to_session(
                     sender_context_service::clear_session(req.db, req.channel_id, req.sender_id)
                         .await;
             }
-            return RichMessage::info(i18n::session_connection_lost(req.lang, req.prefix));
+            return Err(RichMessage::info(i18n::session_connection_lost(
+                req.lang, req.prefix,
+            )));
         }
     }
 
     if let Err(e) = send_chat_prompt(req.conn_mgr, &connection_id, req.text).await {
         if matches!(e, crate::acp::error::AcpError::TurnInProgress) {
-            return RichMessage::info(i18n::agent_busy_retry(req.lang).to_string());
+            return Err(RichMessage::info(
+                i18n::agent_busy_retry(req.lang).to_string(),
+            ));
         }
         req.bridge.lock().await.remove(&connection_id);
         if let Some(binding_id) = session_ref.binding_id {
@@ -1272,23 +1279,23 @@ async fn send_followup_to_session(
             let _ =
                 sender_context_service::clear_session(req.db, req.channel_id, req.sender_id).await;
         }
-        return RichMessage::error(format!(
+        return Err(RichMessage::error(format!(
             "{}{}",
             i18n::failed_to_send_message_label(req.lang),
             e
-        ));
+        )));
     }
 
-    RichMessage::info(i18n::message_sent(req.lang))
+    Ok(RichMessage::info(i18n::message_sent(req.lang)))
 }
 
 async fn resume_topic_binding_and_send_followup(
     req: FollowupRequest<'_>,
     binding: chat_channel_thread_binding::Model,
-) -> RichMessage {
+) -> Result<RichMessage, RichMessage> {
     let conv = match conversation_service::get_by_id(req.db, binding.conversation_id).await {
         Ok(conv) => conv,
-        Err(_) => return RichMessage::info(i18n::conversation_not_found(req.lang)),
+        Err(_) => return Err(RichMessage::info(i18n::conversation_not_found(req.lang))),
     };
     let (connection_id, folder) = match spawn_chat_connection_for_conversation(
         req.db,
@@ -1303,7 +1310,11 @@ async fn resume_topic_binding_and_send_followup(
     .await
     {
         Ok(started) => started,
-        Err(e) => return RichMessage::error(topic_resume_failed(req.lang, conv.id, &e)),
+        Err(e) => {
+            return Err(RichMessage::error(topic_resume_failed(
+                req.lang, conv.id, &e,
+            )))
+        }
     };
 
     let session = ActiveSession {
@@ -1314,10 +1325,9 @@ async fn resume_topic_binding_and_send_followup(
         connection_id: connection_id.clone(),
         agent_type: conv.agent_type,
         content_buffer: String::new(),
-        tool_calls: Vec::new(),
         tool_call_inputs: std::collections::HashMap::new(),
         delegation_rendered: std::collections::HashSet::new(),
-        last_flushed: Instant::now(),
+        next_progress_at: None,
         pending_prompt: None,
         permission_pending: None,
     };
@@ -1339,7 +1349,7 @@ async fn resume_topic_binding_and_send_followup(
     {
         let _ = req.conn_mgr.cancel(req.db, &connection_id).await;
         req.bridge.lock().await.remove(&connection_id);
-        return RichMessage::error(format!("Failed to bind topic: {e}"));
+        return Err(RichMessage::error(format!("Failed to bind topic: {e}")));
     }
 
     let _ = sender_context_service::update_folder(
@@ -1363,14 +1373,14 @@ async fn resume_topic_binding_and_send_followup(
         req.bridge.lock().await.remove(&connection_id);
         let _ = thread_binding_service::clear_connection(req.db, binding.id).await;
         let _ = req.conn_mgr.cancel(req.db, &connection_id).await;
-        return RichMessage::error(format!(
+        return Err(RichMessage::error(format!(
             "{}{}",
             i18n::failed_to_send_message_label(req.lang),
             e
-        ));
+        )));
     }
 
-    RichMessage::info(i18n::message_sent(req.lang))
+    Ok(RichMessage::info(i18n::message_sent(req.lang)))
 }
 
 // ── /resume (list recent) ──
@@ -1905,10 +1915,9 @@ mod tests {
                 connection_id: "active-connection".to_string(),
                 agent_type: AgentType::Codex,
                 content_buffer: String::new(),
-                tool_calls: Vec::new(),
                 tool_call_inputs: std::collections::HashMap::new(),
                 delegation_rendered: std::collections::HashSet::new(),
-                last_flushed: Instant::now(),
+                next_progress_at: None,
                 pending_prompt: None,
                 permission_pending: None,
             },
@@ -2110,10 +2119,9 @@ mod tests {
                 connection_id: "conn-followup".to_string(),
                 agent_type: AgentType::OpenCode,
                 content_buffer: String::new(),
-                tool_calls: Vec::new(),
                 tool_call_inputs: std::collections::HashMap::new(),
                 delegation_rendered: std::collections::HashSet::new(),
-                last_flushed: Instant::now(),
+                next_progress_at: None,
                 pending_prompt: None,
                 permission_pending: None,
             },
@@ -2132,7 +2140,8 @@ mod tests {
             lang: Lang::En,
             prefix: "/",
         })
-        .await;
+        .await
+        .expect("follow-up accepted");
 
         assert_eq!(message.body, i18n::message_sent(Lang::En));
         let command = rx.recv().await.expect("prompt command");
@@ -2273,10 +2282,9 @@ mod tests {
                 connection_id: "conn-permission".to_string(),
                 agent_type: AgentType::ClaudeCode,
                 content_buffer: String::new(),
-                tool_calls: Vec::new(),
                 tool_call_inputs: std::collections::HashMap::new(),
                 delegation_rendered: std::collections::HashSet::new(),
-                last_flushed: Instant::now(),
+                next_progress_at: None,
                 pending_prompt: None,
                 permission_pending: Some(PendingPermission {
                     request_id: "req-1".to_string(),

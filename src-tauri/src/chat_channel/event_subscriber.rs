@@ -871,10 +871,9 @@ mod permission_push_tests {
             connection_id: connection_id.into(),
             agent_type: AgentType::ClaudeCode,
             content_buffer: String::new(),
-            tool_calls: Vec::new(),
             tool_call_inputs: HashMap::new(),
             delegation_rendered: HashSet::new(),
-            last_flushed: Instant::now(),
+            next_progress_at: None,
             pending_prompt: None,
             permission_pending: None,
         }

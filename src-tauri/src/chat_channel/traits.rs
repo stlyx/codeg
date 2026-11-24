@@ -40,6 +40,15 @@ pub trait ChatChannelBackend: Send + Sync + 'static {
         self.send_rich_message(message).await
     }
 
+    /// Send a message while a response is still in progress.
+    async fn send_turn_update(
+        &self,
+        message: &RichMessage,
+        target: &ChannelMessageTarget,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        self.send_rich_message_to(message, target).await
+    }
+
     /// Create a provider-specific thread/topic target.
     async fn create_thread(
         &self,
