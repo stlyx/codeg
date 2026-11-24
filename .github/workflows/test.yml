@@ -77,14 +77,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        os: [ubuntu-22.04, macos-15-intel, windows-latest]
         mode: [desktop, server, cli]
         # macOS only runs the desktop cell; server and cli are covered by
         # the Linux and Windows cells.
         exclude:
-          - os: macos-latest
+          - os: macos-15-intel
             mode: server
-          - os: macos-latest
+          - os: macos-15-intel
             mode: cli
         include:
           - mode: desktop
@@ -161,6 +161,12 @@ jobs:
           echo "CARGO_PROFILE_DEV_DEBUG=0" >> "$GITHUB_ENV"
           echo "CARGO_PROFILE_TEST_DEBUG=0" >> "$GITHUB_ENV"
           echo "CARGO_BUILD_JOBS=1" >> "$GITHUB_ENV"
+
+      - name: Sign macOS Intel test binaries at link time
+        # Intel executables may link unsigned. The cdhash test needs an
+        # ad-hoc signature so it can compare the kernel and Security.framework.
+        if: matrix.os == 'macos-15-intel' && matrix.mode == 'desktop'
+        run: echo "RUSTFLAGS=-C link-arg=-Wl,-adhoc_codesign" >> "$GITHUB_ENV"
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
