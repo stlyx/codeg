@@ -1,0 +1,21 @@
+.github/workflows/test.yml
+  s_93ddd08ad30e95::t_1e7be7dace21ad 80,85,87
+.github/workflows/release.yml
+  s_93ddd08ad30e95::t_ba8a621fadd2f5 303-304,488,547
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b20419b1cd9f02c6da013e306795babe1b00edd6",
+  "prompts": {},
+  "sessions": {
+    "s_93ddd08ad30e95": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a20d90-06ef-7ef3-a903-93361142a6c8",
+        "model": "gpt-6.2-sol"
+      },
+      "human_author": "xintaofei <xintaofei@users.noreply.github.com>"
+    }
+  }
+}
