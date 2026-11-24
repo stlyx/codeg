@@ -1,0 +1,66 @@
+src-tauri/src/chat_channel/backends/mod.rs
+  h_7a54ba4f35a957 4,66-87
+src-tauri/src/chat_channel/mod.rs
+  h_7a54ba4f35a957 17
+src-tauri/src/chat_channel/types.rs
+  h_7a54ba4f35a957 9,32-51,58
+src-tauri/src/chat_channel/welink/channel.rs
+  h_7a54ba4f35a957 1-1132
+src-tauri/src/chat_channel/welink/mod.rs
+  h_7a54ba4f35a957 1-128
+src-tauri/src/chat_channel/welink/protocol.rs
+  h_7a54ba4f35a957 1-717
+src-tauri/src/chat_channel/welink/register.rs
+  h_7a54ba4f35a957 1-477
+src-tauri/src/commands/chat_channel.rs
+  h_7a54ba4f35a957 4,6,485-622,863-898,1131-1188
+src-tauri/src/lib.rs
+  h_7a54ba4f35a957 2517-2518
+src-tauri/src/web/handlers/chat_channel.rs
+  h_7a54ba4f35a957 10,319-373
+src-tauri/src/web/router.rs
+  h_7a54ba4f35a957 1813-1820
+src/components/settings/add-chat-channel-dialog.tsx
+  h_7a54ba4f35a957 32,39,51-54,67-70,85-105,107-121,123-130,132-149,151-171,173,205,221,237,250-304,367-381
+src/components/settings/channel-list-tab.tsx
+  h_7a54ba4f35a957 56,68-70,146-148,178-195,404,413,426-434
+src/components/settings/edit-chat-channel-dialog.tsx
+  h_7a54ba4f35a957 3,31,39,45-48,54-61,80-127,129-140,142-163,165,195-212,214-283,349-358
+src/components/settings/welink-auth-dialog.tsx
+  h_7a54ba4f35a957 1-291
+src/i18n/messages/ar.json
+  h_7a54ba4f35a957 4595,4631-4652
+src/i18n/messages/de.json
+  h_7a54ba4f35a957 4595,4631-4652
+src/i18n/messages/en.json
+  h_7a54ba4f35a957 4615,4651-4672
+src/i18n/messages/es.json
+  h_7a54ba4f35a957 4595,4631-4652
+src/i18n/messages/fr.json
+  h_7a54ba4f35a957 4595,4631-4652
+src/i18n/messages/ja.json
+  h_7a54ba4f35a957 4595,4631-4652
+src/i18n/messages/ko.json
+  h_7a54ba4f35a957 4595,4631-4652
+src/i18n/messages/pt.json
+  h_7a54ba4f35a957 4595,4631-4652
+src/i18n/messages/zh-CN.json
+  h_7a54ba4f35a957 4615,4651-4672
+src/i18n/messages/zh-TW.json
+  h_7a54ba4f35a957 4595,4631-4652
+src/lib/api.ts
+  h_7a54ba4f35a957 5707-5737
+src/lib/types.ts
+  h_7a54ba4f35a957 5651
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "953f28d3f8db06e9e5453c3e3b8512c2ce19f7e8",
+  "prompts": {},
+  "humans": {
+    "h_7a54ba4f35a957": {
+      "author": "xintaofei <xintaofei@users.noreply.github.com>"
+    }
+  }
+}
